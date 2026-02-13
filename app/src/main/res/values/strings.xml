@@ -1,0 +1,59 @@
+<resources>
+    <string name="app_name">DanceTimer 计时器</string>
+
+    <!-- 通知 -->
+    <string name="notification_channel_name">DanceTimer</string>
+    <string name="notification_channel_desc">计时器运行时的常驻通知</string>
+
+    <!-- 主页 -->
+    <string name="home_title">DanceTimer</string>
+    <string name="timer_idle">准备就绪</string>
+    <string name="timer_running">计时中…</string>
+    <string name="timer_finished">计时结束</string>
+    <string name="btn_start">开始计时</string>
+    <string name="btn_stop">停止计时</string>
+    <string name="btn_dismiss">确认</string>
+    <string name="no_rule_configured">请先配置计价规则</string>
+    <string name="current_rule">当前规则：%s</string>
+    <string name="volume_hint_long_press">💡 长按音量+启动 · 长按音量-停止</string>
+    <string name="volume_hint_triple">💡 三连按音量+启动 · 三连按音量-停止</string>
+
+    <!-- 计价规则 -->
+    <string name="pricing_rules_title">计价规则</string>
+    <string name="add_rule">添加规则</string>
+    <string name="edit_rule">编辑规则</string>
+    <string name="rule_name_hint">规则名称</string>
+    <string name="add_tier">添加档位</string>
+    <string name="tier_duration_hint">时长（分钟）</string>
+    <string name="tier_price_hint">价格（元）</string>
+    <string name="delete_confirm">确定删除？</string>
+    <string name="set_as_default">设为默认</string>
+    <string name="is_default">默认规则</string>
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="delete">删除</string>
+
+    <!-- 历史记录 -->
+    <string name="history_title">历史记录</string>
+    <string name="no_records">暂无记录</string>
+    <string name="today_cost">今日消费</string>
+    <string name="week_cost">本周消费</string>
+    <string name="month_cost">本月消费</string>
+    <string name="clear_all">清除全部</string>
+
+    <!-- 设置 -->
+    <string name="settings_title">设置</string>
+    <string name="trigger_mode_title">触发方式</string>
+    <string name="trigger_long_press">长按音量键 (1.5秒)</string>
+    <string name="trigger_triple_click">三连按音量键</string>
+    <string name="vibrate_on_tier_title">档位震动提醒</string>
+    <string name="vibrate_on_tier_desc">到达每个价格档位时震动提醒\n震动次数 = 档位序号</string>
+    <string name="accessibility_title">无障碍服务</string>
+    <string name="accessibility_enabled">已开启 ✓</string>
+    <string name="accessibility_disabled">未开启 — 点击前往设置</string>
+    <string name="accessibility_desc">开启后可在锁屏/息屏状态下用音量键控制计时</string>
+
+    <!-- Widget -->
+    <string name="widget_name">DanceTimer</string>
+    <string name="widget_description">显示计时状态，点击进入 App</string>
+</resources>
