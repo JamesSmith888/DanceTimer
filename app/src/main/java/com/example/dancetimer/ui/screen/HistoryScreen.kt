@@ -204,11 +204,18 @@ private fun RecordCard(
     onClick: () -> Unit
 ) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val isCancelled = record.isCancelled
+    val isAuto = record.isAutoTriggered
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isCancelled)
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            else
+                MaterialTheme.colorScheme.surface
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         onClick = onClick
     ) {
@@ -220,15 +227,57 @@ private fun RecordCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(
-                    text = timeFormat.format(Date(record.startTime)),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = timeFormat.format(Date(record.startTime)),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isCancelled)
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        else
+                            MaterialTheme.colorScheme.onSurface
+                    )
+                    if (isAuto) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = "自动",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    if (isCancelled) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.errorContainer
+                        ) {
+                            Text(
+                                text = "误计时",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(2.dp))
                 val totalMin = record.durationSeconds / 60
+                val subtitleText = if (isCancelled && record.cancelledDurationSeconds > 0) {
+                    val m = record.cancelledDurationSeconds / 60
+                    val s = record.cancelledDurationSeconds % 60
+                    val dur = if (m > 0) "${m}分${s}秒" else "${s}秒"
+                    "运行 $dur · 已取消"
+                } else {
+                    "${totalMin}分钟 · ${record.pricingRuleName}"
+                }
                 Text(
-                    text = "${totalMin}分钟 · ${record.pricingRuleName}",
+                    text = subtitleText,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -238,7 +287,10 @@ private fun RecordCard(
                 text = CostCalculator.formatCost(record.cost),
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
+                color = if (isCancelled)
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                else
+                    MaterialTheme.colorScheme.primary
             )
         }
     }

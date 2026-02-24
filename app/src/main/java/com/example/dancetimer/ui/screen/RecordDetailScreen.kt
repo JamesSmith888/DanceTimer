@@ -178,6 +178,57 @@ fun RecordDetailScreen(
                     }
                 }
 
+                // 自动计时信息卡片（仅自动触发的记录才显示）
+                if (record!!.isAutoTriggered) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp)
+                        ) {
+                            Text(
+                                text = "自动计时信息",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+                                modifier = Modifier.padding(bottom = 12.dp)
+                            )
+
+                            DetailRow("触发方式", "息屏自动触发")
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+
+                            if (record!!.screenOffDelaySeconds > 0) {
+                                DetailRow("延迟等待", "${record!!.screenOffDelaySeconds} 秒")
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                            }
+
+                            val resultText = when (record!!.autoStartResult) {
+                                DanceRecord.RESULT_CONFIRMED_USER -> "手动确认"
+                                DanceRecord.RESULT_CONFIRMED_AUTO -> "自动确认（超过半首歌）"
+                                DanceRecord.RESULT_CANCELLED -> "已取消（误计时）"
+                                else -> "—"
+                            }
+                            DetailRow("计时结果", resultText)
+
+                            if (record!!.isCancelled && record!!.cancelledDurationSeconds > 0) {
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                                val m = record!!.cancelledDurationSeconds / 60
+                                val s = record!!.cancelledDurationSeconds % 60
+                                val dur = if (m > 0) "${m}分${s}秒" else "${s}秒"
+                                DetailRow("运行时长", "$dur（¥0，未计费）")
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(32.dp))
             }
         }

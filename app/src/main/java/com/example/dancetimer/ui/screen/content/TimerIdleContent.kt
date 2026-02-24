@@ -147,8 +147,8 @@ fun TimerIdleContent(
 
     // ── 操作提示 ──
     val hint = when (triggerMode) {
-        TriggerMode.LONG_PRESS -> "💡 长按音量+启动 · 长按音量-停止"
-        TriggerMode.TRIPLE_CLICK -> "💡 三连按音量+启动 · 三连按音量-停止"
+        TriggerMode.LONG_PRESS -> "💡 长按【音量+】启动 · 长按【音量-】停止"
+        TriggerMode.TRIPLE_CLICK -> "💡 三连按【音量+】启动 · 三连按【音量-】停止"
     }
     Text(
         text = hint,

@@ -9,8 +9,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.dancetimer.service.TimerState
 import com.example.dancetimer.util.CostCalculator
 
@@ -62,17 +66,35 @@ fun TimerFinishedContent(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 时长
-            Text(
-                text = durationStr,
-                style = typography.displayMedium,
-                color = colors.onPrimaryContainer
-            )
-
             // 已计费曲数
+            if (state.songCount > 0) {
+                Text(
+                    text = buildAnnotatedString {
+                        append("已计")
+                        pushStyle(SpanStyle(
+                            fontSize = 44.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = colors.primary
+                        ))
+                        append("\u2009${state.songCount}\u2009")
+                        pop()
+                        append("曲")
+                    },
+                    style = typography.headlineMedium,
+                    color = colors.onPrimaryContainer.copy(alpha = 0.7f)
+                )
+            } else {
+                Text(
+                    text = "未满1曲",
+                    style = typography.headlineMedium,
+                    color = colors.onPrimaryContainer.copy(alpha = 0.75f)
+                )
+            }
+
+            // 时长
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = if (state.songCount > 0) "已计${state.songCount}曲" else "未满1曲",
+                text = durationStr,
                 style = typography.headlineMedium,
                 color = colors.onPrimaryContainer.copy(alpha = 0.85f)
             )
@@ -98,7 +120,7 @@ fun TimerFinishedContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "⏸️ 停止缓冲已生效，已省 ${CostCalculator.formatCost(state.savedAmount)}",
+                        text = "🛡️ 停止缓冲已生效，已省 ${CostCalculator.formatCost(state.savedAmount)}",
                         style = typography.labelSmall,
                         color = colors.onPrimaryContainer
                     )

@@ -15,8 +15,8 @@
     <string name="btn_dismiss">确认</string>
     <string name="no_rule_configured">请先配置计价规则</string>
     <string name="current_rule">当前规则：%s</string>
-    <string name="volume_hint_long_press">💡 长按音量+启动 · 长按音量-停止</string>
-    <string name="volume_hint_triple">💡 三连按音量+启动 · 三连按音量-停止</string>
+    <string name="volume_hint_long_press">💡 长按【音量+】启动 · 长按【音量-】停止</string>
+    <string name="volume_hint_triple">💡 三连按【音量+】启动 · 三连按【音量-】停止</string>
 
     <!-- 计价规则 -->
     <string name="pricing_rules_title">计价规则</string>

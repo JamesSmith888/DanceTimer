@@ -43,19 +43,14 @@ fun BackgroundGuideDialog(
                     lineHeight = 18.sp
                 )
                 Text(
-                    text = "OPPO / realme / 一加：",
+                    text = "点击下方按钮将跳转到本应用的「应用详情」页面，请在其中找到：",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
+                    lineHeight = 17.sp
                 )
                 Text(
-                    text = "设置 → 电池 → 更多电池设置 → 优化电池使用 → 找到本应用 → 选择「不优化」",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 16.sp
-                )
-                Text(
-                    text = "其他品牌：设置 → 电池 → 找到本应用 → 关闭电池优化",
+                    text = "• 耗电管理 / 电池 → 允许后台活动\n• 或：电池优化 → 选择「不优化」",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 16.sp
@@ -91,22 +86,11 @@ fun BackgroundGuideDialog(
                     lineHeight = 18.sp
                 )
                 Text(
-                    text = "OPPO / realme / 一加：",
+                    text = "在「应用详情」页中找到通知管理，开启「锁屏通知」。",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "设置 → 通知与状态栏 → 通知管理 → 找到本应用 → 开启「锁屏通知」",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 16.sp
-                )
-                Text(
-                    text = "其他品牌：设置 → 通知 → 找到本应用 → 锁屏显示",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 16.sp
+                    color = MaterialTheme.colorScheme.primary,
+                    lineHeight = 17.sp
                 )
             }
         },
@@ -117,7 +101,7 @@ fun BackgroundGuideDialog(
                         openBatterySettings(context)
                     }
                 ) {
-                    Text("关闭电池优化")
+                    Text("前往应用详情")
                 }
             } else {
                 TextButton(onClick = onDismiss) {
@@ -143,17 +127,7 @@ fun isIgnoringBatteryOptimizations(context: Context): Boolean {
 }
 
 fun openBatterySettings(context: Context) {
-    // 优先：直接请求忽略电池优化（弹系统弹窗）
-    try {
-        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-            data = Uri.parse("package:${context.packageName}")
-        }
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-        return
-    } catch (_: Exception) { }
-
-    // 备选：打开应用详情页
+    // 直接打开当前应用的「应用详情」页，用户可在其中找到耗电管理/电池优化开关
     try {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.parse("package:${context.packageName}")
@@ -163,9 +137,9 @@ fun openBatterySettings(context: Context) {
         return
     } catch (_: Exception) { }
 
-    // 最后保底：打开电池设置页
+    // 保底：打开应用管理列表
     try {
-        val intent = Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+        val intent = Intent(Settings.ACTION_APPLICATION_SETTINGS)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     } catch (_: Exception) { }

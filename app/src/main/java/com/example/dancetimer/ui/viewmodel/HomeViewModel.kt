@@ -46,4 +46,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelAutoStart() {
         TimerForegroundService.cancelAutoStart(getApplication())
     }
+
+    fun confirmAutoTimer() {
+        TimerForegroundService.confirmAutoStart(getApplication())
+    }
 }

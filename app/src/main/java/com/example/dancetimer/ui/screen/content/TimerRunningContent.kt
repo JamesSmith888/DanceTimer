@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.example.dancetimer.data.model.PriceTier
-import com.example.dancetimer.service.TimerForegroundService
 import com.example.dancetimer.service.TimerState
 import com.example.dancetimer.ui.screen.components.BillingInfoDialog
 import com.example.dancetimer.ui.screen.components.DanceTimeline
@@ -40,6 +39,7 @@ fun TimerRunningContent(
     onResumeClick: () -> Unit,
     onStopClick: () -> Unit,
     onCancelAutoClick: () -> Unit = {},
+    onConfirmAutoClick: () -> Unit = {},
     onRuleClick: () -> Unit = {}
 ) {
     val typography = MaterialTheme.typography
@@ -126,7 +126,8 @@ fun TimerRunningContent(
     if (state.isAutoStarted) {
         AutoStartBanner(
             elapsedSeconds = state.elapsedSeconds,
-            onCancelAutoClick = onCancelAutoClick
+            onCancelAutoClick = onCancelAutoClick,
+            onConfirmAutoClick = onConfirmAutoClick
         )
         Spacer(modifier = Modifier.height(28.dp))
     }
@@ -235,12 +236,14 @@ private fun CostInfoSection(state: TimerState.Running) {
 @Composable
 private fun AutoStartBanner(
     elapsedSeconds: Int,
-    onCancelAutoClick: () -> Unit
+    onCancelAutoClick: () -> Unit,
+    onConfirmAutoClick: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
-    val remaining = (TimerForegroundService.AUTO_START_CONFIRM_SECONDS - elapsedSeconds)
-        .coerceAtLeast(0)
+    val minutes = elapsedSeconds / 60
+    val seconds = elapsedSeconds % 60
+    val timeText = if (minutes > 0) "${minutes}分${seconds}秒" else "${seconds}秒"
 
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -254,31 +257,46 @@ private fun AutoStartBanner(
             modifier = Modifier.padding(16.dp)
         ) {
             Text(
-                text = "🤖 息屏自动启动了计时",
+                text = "🤖 息屏自动启动了计时（已 $timeText）",
                 style = typography.titleSmall,
                 color = colors.tertiary
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = if (remaining > 0) "如果是误触发，${remaining}秒内可快速取消"
-                       else "已确认为正常计时",
+                text = "计满半首歌后将自动确认",
                 style = typography.bodySmall,
                 color = colors.onSurfaceVariant
             )
-            if (remaining > 0) {
-                Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Button(
-                    onClick = onCancelAutoClick,
-                    colors = ButtonDefaults.buttonColors(containerColor = colors.error),
+                    onClick = onConfirmAutoClick,
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
                     shape = RoundedCornerShape(24.dp),
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .weight(1f)
                         .height(44.dp)
                 ) {
                     Text(
-                        text = "取消自动计时（不计费）",
+                        text = "✓ 确认继续",
                         style = typography.labelLarge,
-                        color = colors.onError
+                        color = colors.onPrimary
+                    )
+                }
+                OutlinedButton(
+                    onClick = onCancelAutoClick,
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                ) {
+                    Text(
+                        text = "✗ 取消",
+                        style = typography.labelLarge,
+                        color = colors.error
                     )
                 }
             }

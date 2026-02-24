@@ -19,6 +19,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     val autoStartOnScreenOff: Flow<Boolean> = prefs.autoStartOnScreenOff
 
+    val autoStartDelaySeconds: Flow<Int> = prefs.autoStartDelaySeconds
+
+    val stepDetectionEnabled: Flow<Boolean> = prefs.stepDetectionEnabled
+
     val themeMode: Flow<ThemeMode> = prefs.themeMode
 
     fun setTriggerMode(mode: TriggerMode) {
@@ -36,6 +40,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setAutoStartOnScreenOff(enabled: Boolean) {
         viewModelScope.launch {
             prefs.setAutoStartOnScreenOff(enabled)
+        }
+    }
+
+    fun setAutoStartDelaySeconds(seconds: Int) {
+        viewModelScope.launch {
+            prefs.setAutoStartDelaySeconds(seconds)
+        }
+    }
+
+    fun setStepDetectionEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setStepDetectionEnabled(enabled)
         }
     }
 

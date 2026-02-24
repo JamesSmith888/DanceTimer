@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# 签名文件 — 不入仓库
+keystore.properties
+*.jks
+*.keystore

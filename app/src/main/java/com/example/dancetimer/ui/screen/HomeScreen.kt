@@ -147,6 +147,7 @@ fun HomeScreen(
                         onResumeClick = { viewModel.resumeTimer() },
                         onStopClick = { viewModel.stopTimer() },
                         onCancelAutoClick = { viewModel.cancelAutoStart() },
+                        onConfirmAutoClick = { viewModel.confirmAutoTimer() },
                         onRuleClick = {
                             navController.navigate(
                                 Screen.EditRule.createRoute(state.ruleId)

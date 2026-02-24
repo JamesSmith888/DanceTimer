@@ -35,6 +35,8 @@ class UserPreferencesManager(private val context: Context) {
         private val KEY_DEFAULT_RULE_ID = longPreferencesKey("default_rule_id")
         private val KEY_FIRST_LAUNCH = booleanPreferencesKey("first_launch")
         private val KEY_AUTO_START_ON_SCREEN_OFF = booleanPreferencesKey("auto_start_on_screen_off")
+        private val KEY_AUTO_START_DELAY_SECONDS = intPreferencesKey("auto_start_delay_seconds")
+        private val KEY_STEP_DETECTION_ENABLED = booleanPreferencesKey("step_detection_enabled")
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_BATTERY_GUIDE_SHOWN = booleanPreferencesKey("battery_guide_shown")
     }
@@ -100,6 +102,30 @@ class UserPreferencesManager(private val context: Context) {
         }
     }
 
+    // ---- 自动计时延迟秒数 ----
+
+    val autoStartDelaySeconds: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_AUTO_START_DELAY_SECONDS] ?: 180
+    }
+
+    suspend fun setAutoStartDelaySeconds(seconds: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_AUTO_START_DELAY_SECONDS] = seconds
+        }
+    }
+
+    // ---- 计步器防误触（实验性） ----
+
+    val stepDetectionEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_STEP_DETECTION_ENABLED] ?: false
+    }
+
+    suspend fun setStepDetectionEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_STEP_DETECTION_ENABLED] = enabled
+        }
+    }
+
     // ---- 后台运行引导 ----
 
     val batteryGuideShown: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -115,8 +141,8 @@ class UserPreferencesManager(private val context: Context) {
     // ---- 主题模式 ----
 
     val themeMode: Flow<ThemeMode> = context.dataStore.data.map { prefs ->
-        val value = prefs[KEY_THEME_MODE] ?: ThemeMode.DARK.name
-        try { ThemeMode.valueOf(value) } catch (_: Exception) { ThemeMode.DARK }
+        val value = prefs[KEY_THEME_MODE] ?: ThemeMode.SYSTEM.name
+        try { ThemeMode.valueOf(value) } catch (_: Exception) { ThemeMode.SYSTEM }
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {
