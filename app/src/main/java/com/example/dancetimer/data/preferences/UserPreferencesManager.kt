@@ -37,6 +37,7 @@ class UserPreferencesManager(private val context: Context) {
         private val KEY_AUTO_START_ON_SCREEN_OFF = booleanPreferencesKey("auto_start_on_screen_off")
         private val KEY_AUTO_START_DELAY_SECONDS = intPreferencesKey("auto_start_delay_seconds")
         private val KEY_STEP_DETECTION_ENABLED = booleanPreferencesKey("step_detection_enabled")
+        private val KEY_STEP_WALKING_THRESHOLD = intPreferencesKey("step_walking_threshold")
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_BATTERY_GUIDE_SHOWN = booleanPreferencesKey("battery_guide_shown")
     }
@@ -123,6 +124,19 @@ class UserPreferencesManager(private val context: Context) {
     suspend fun setStepDetectionEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[KEY_STEP_DETECTION_ENABLED] = enabled
+        }
+    }
+
+    // ---- 步行检测阈值（步/分钟） ----
+
+    /** 步行判定阈值（步/分钟），默认 80 */
+    val stepWalkingThreshold: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_STEP_WALKING_THRESHOLD] ?: 80
+    }
+
+    suspend fun setStepWalkingThreshold(threshold: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_STEP_WALKING_THRESHOLD] = threshold
         }
     }
 

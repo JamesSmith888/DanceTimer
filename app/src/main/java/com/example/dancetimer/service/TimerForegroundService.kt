@@ -241,6 +241,8 @@ class TimerForegroundService : Service() {
     private var walkingStoppedCount = 0
     /** 当前延迟等待周期的秒数，用于步行结束后重新进入延迟 */
     private var pendingAutoStartDelaySeconds = 0
+    /** 当前生效的步行判定阈值（步/分钟），从用户配置加载 */
+    private var activeStepWalkingThreshold = STEP_WALKING_THRESHOLD_PER_MINUTE
 
     // 触发来源 & 确认类型追踪（用于保存历史记录元数据）
     private var startTriggerType: String = DanceRecord.TRIGGER_MANUAL
@@ -489,10 +491,14 @@ class TimerForegroundService : Service() {
                 startScreenOffDelay = 0
             }
 
-            startElapsedRealtime = SystemClock.elapsedRealtime()
-            startWallClock = System.currentTimeMillis()
+            // 自动计时：将起始时间回溯延迟秒数，使 elapsed 从延迟值开始（息屏等待期间即为跳舞时间）
+            val autoOffsetMs = if (isAuto) startScreenOffDelay * 1000L else 0L
+            startElapsedRealtime = SystemClock.elapsedRealtime() - autoOffsetMs
+            startWallClock = System.currentTimeMillis() - autoOffsetMs
             chronometerBase = startWallClock
-            lastReachedSongIndex = -1
+
+            val initialElapsed = if (isAuto) startScreenOffDelay else 0
+            lastReachedSongIndex = CostCalculator.getCurrentSongIndex(initialElapsed, tiers)
             lastNotifiedCost = 0f
             lastNotifiedSongCount = -1
             lastNotifiedInGrace = false
@@ -502,16 +508,17 @@ class TimerForegroundService : Service() {
             // 获取 WakeLock
             acquireWakeLock()
 
-            val initCost = CostCalculator.calculate(0, tiers)
-            val initSongCount = CostCalculator.getSongCount(0, tiers)
+            val initCost = CostCalculator.calculate(initialElapsed, tiers)
+            val initSongCount = CostCalculator.getSongCount(initialElapsed, tiers)
+            val initSongIndex = CostCalculator.getCurrentSongIndex(initialElapsed, tiers)
 
             // 切换前台通知：先移除待命通知，再启动计时通知
             // 使用不同 NOTIFICATION_ID 避免 OEM（OPPO/ColorOS/MIUI）渠道切换失败
             val nm = getSystemService(NotificationManager::class.java)
             nm.cancel(NOTIFICATION_ID_STANDBY)
             Log.d(TAG, "待命通知已取消(ID=$NOTIFICATION_ID_STANDBY), 准备发送计时通知(ID=$NOTIFICATION_ID_RUNNING)")
-            startForeground(NOTIFICATION_ID_RUNNING, buildRunningNotification(0, initCost, initSongCount, isAutoStarted = isAuto))
-            Log.d(TAG, "计时通知已发送, channel=$CHANNEL_ID_RUNNING")
+            startForeground(NOTIFICATION_ID_RUNNING, buildRunningNotification(initialElapsed, initCost, initSongCount, isAutoStarted = isAuto))
+            Log.d(TAG, "计时通知已发送, channel=$CHANNEL_ID_RUNNING, initialElapsed=${initialElapsed}s")
 
             // 更新 MediaSession 元数据（锁屏/状态胶囊显示计时信息）
             updateMediaSessionForRunning(initCost)
@@ -528,8 +535,8 @@ class TimerForegroundService : Service() {
 
             // 更新状态
             _timerState.value = TimerState.Running(
-                elapsedSeconds = 0,
-                currentSongIndex = 0,
+                elapsedSeconds = initialElapsed,
+                currentSongIndex = initSongIndex,
                 cost = initCost,
                 songCount = initSongCount,
                 startTimeMillis = startWallClock,
@@ -1345,7 +1352,7 @@ class TimerForegroundService : Service() {
     //   - 用户取消 → 回到 Idle
     //   - 用户忽略并再次锁屏 → 取消当前计时，重新进入 Pending
     //   - 首次计费（cost > 0）→ 自动确认
-    // 计步器: 步频 > 80步/分 = 走路（非跳舞）→ 取消 pending
+    // 计步器: 步频 > 用户配置阈值 = 走路（非跳舞）→ 取消 pending
 
     /**
      * 进入延迟等待阶段 — 锁屏后不立即计时，等待指定秒数
@@ -1367,6 +1374,8 @@ class TimerForegroundService : Service() {
             val prefs = UserPreferencesManager(applicationContext)
             val stepEnabled = prefs.stepDetectionEnabled.first()
             if (stepEnabled) {
+                // 加载用户配置的步行阈值
+                activeStepWalkingThreshold = prefs.stepWalkingThreshold.first()
                 startStepDetection()
             } else {
                 Log.d(TAG, "计步器防误触未开启，跳过")
@@ -1693,8 +1702,8 @@ class TimerForegroundService : Service() {
         val effectiveWindowSec = effectiveWindowMs / 1000.0
 
         val stepsPerMinute = if (effectiveWindowSec > 0) (recentSteps / effectiveWindowSec) * 60.0 else 0.0
-        val isWalking = stepsPerMinute > STEP_WALKING_THRESHOLD_PER_MINUTE
-        Log.d(TAG, "计步(滚动${STEP_DETECTION_WINDOW_SECONDS}s窗口): ${recentSteps}步/${effectiveWindowSec.toInt()}秒, ${stepsPerMinute.toInt()}步/分, 走路=$isWalking")
+        val isWalking = stepsPerMinute > activeStepWalkingThreshold
+        Log.d(TAG, "计步(滚动${STEP_DETECTION_WINDOW_SECONDS}s窗口): ${recentSteps}步/${effectiveWindowSec.toInt()}秒, ${stepsPerMinute.toInt()}步/分, 阈值=${activeStepWalkingThreshold}, 走路=$isWalking")
         return isWalking
     }
 
