@@ -1,8 +1,17 @@
 package com.example.dancetimer.ui.screen
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
@@ -17,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.text.SpanStyle
@@ -33,10 +43,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import com.example.dancetimer.BuildConfig
 import com.example.dancetimer.data.preferences.ThemeMode
 import com.example.dancetimer.data.preferences.TriggerMode
+import com.example.dancetimer.data.update.UpdateState
 import com.example.dancetimer.ui.navigation.Screen
 import com.example.dancetimer.ui.screen.components.BackgroundGuideDialog
+import com.example.dancetimer.ui.screen.components.UpdateDialog
 import com.example.dancetimer.ui.screen.components.isIgnoringBatteryOptimizations
 import com.example.dancetimer.ui.viewmodel.SettingsViewModel
 
@@ -51,8 +64,29 @@ fun SettingsScreen(
     val autoStartOnScreenOff by viewModel.autoStartOnScreenOff.collectAsState(initial = false)
     val autoStartDelay by viewModel.autoStartDelaySeconds.collectAsState(initial = 180)
     val stepDetectionEnabled by viewModel.stepDetectionEnabled.collectAsState(initial = false)
+    val stepWalkingThreshold by viewModel.stepWalkingThreshold.collectAsState(initial = 80)
     val themeMode by viewModel.themeMode.collectAsState(initial = ThemeMode.SYSTEM)
+    val updateState by viewModel.updateState.collectAsState()
     val context = LocalContext.current
+    // 需要 Activity 引用来判断 shouldShowRequestPermissionRationale
+    val activity = context as? android.app.Activity
+
+    // ACTIVITY_RECOGNITION 权限请求 — 开启步行检测前需获取
+    val activityRecognitionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            viewModel.setStepDetectionEnabled(true)
+        } else {
+            // 用户拒绝后，引导到系统设置页手动开启
+            Toast.makeText(context, "请在系统设置中授予「健身运动」权限", Toast.LENGTH_LONG).show()
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", context.packageName, null)
+            }
+            context.startActivity(intent)
+        }
+    }
+
     var showBatteryGuide by remember { mutableStateOf(false) }
     // 每次回到前台重新检测
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -75,6 +109,15 @@ fun SettingsScreen(
             }
         )
     }
+
+    // 版本更新对话框
+    UpdateDialog(
+        state = updateState,
+        onDownload = { info -> viewModel.startDownload(info) },
+        onInstall = { downloadId -> viewModel.installApk(downloadId) },
+        onRetry = { viewModel.checkForUpdate() },
+        onDismiss = { viewModel.dismissUpdate() }
+    )
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -294,13 +337,62 @@ fun SettingsScreen(
                                             }
                                         }
                                     else if (autoStartDelay < 10)
-                                        buildAnnotatedString { append("等待期间检测步行(>80步/分)则停止自动计时，停下后自动重试(建议延迟≥ 10秒)")
+                                        buildAnnotatedString { append("等待期间检测步行(>${stepWalkingThreshold}步/分)则停止自动计时，停下后自动重试(建议延迟≥ 10秒)")
                                         }
                                     else
-                                        buildAnnotatedString { append("等待期间检测步行(>80步/分)则停止自动计时，停下后自动重试") },
+                                        buildAnnotatedString { append("等待期间检测步行(>${stepWalkingThreshold}步/分)则停止自动计时，停下后自动重试") },
                                     checked = stepDetectionEnabled,
-                                    onCheckedChange = { viewModel.setStepDetectionEnabled(it) }
+                                    onCheckedChange = { enabled ->
+                                        if (enabled) {
+                                            // Android 10+ 需要 ACTIVITY_RECOGNITION 运行时权限
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                val granted = ContextCompat.checkSelfPermission(
+                                                    context, Manifest.permission.ACTIVITY_RECOGNITION
+                                                ) == PackageManager.PERMISSION_GRANTED
+                                                if (granted) {
+                                                    viewModel.setStepDetectionEnabled(true)
+                                                } else {
+                                                    // 判断是否还能弹系统权限对话框
+                                                    val canAskAgain = activity?.let {
+                                                        ActivityCompat.shouldShowRequestPermissionRationale(
+                                                            it, Manifest.permission.ACTIVITY_RECOGNITION
+                                                        )
+                                                    } ?: true // 无法判断时尝试弹窗
+                                                    if (canAskAgain) {
+                                                        // 用户曾拒绝但未勾选"不再提示"，可再次弹窗
+                                                        activityRecognitionLauncher.launch(
+                                                            Manifest.permission.ACTIVITY_RECOGNITION
+                                                        )
+                                                    } else {
+                                                        // 首次请求 或 用户已选择"不再提示"
+                                                        // 首次时 shouldShow=false，launcher 仍然会弹出系统对话框
+                                                        // 永久拒绝时 shouldShow=false，launcher 回调直接返回 false
+                                                        // 统一走 launcher：首次能弹窗；永久拒绝由回调跳转设置页
+                                                        activityRecognitionLauncher.launch(
+                                                            Manifest.permission.ACTIVITY_RECOGNITION
+                                                        )
+                                                    }
+                                                }
+                                            } else {
+                                                // Android 9 及以下无需运行时权限
+                                                viewModel.setStepDetectionEnabled(true)
+                                            }
+                                        } else {
+                                            viewModel.setStepDetectionEnabled(false)
+                                        }
+                                    }
                                 )
+                                // 步行阈值配置（仅在步行检测开启时显示）
+                                if (stepDetectionEnabled) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)
+                                    )
+                                    StepThresholdSelector(
+                                        selectedThreshold = stepWalkingThreshold,
+                                        onThresholdSelected = { viewModel.setStepWalkingThreshold(it) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -392,12 +484,23 @@ fun SettingsScreen(
             ) {
                 val uriHandler = LocalUriHandler.current
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                    Text(
-                        "DanceTimer",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    // 应用名 + 版本号
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "DanceTimer",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "v${BuildConfig.VERSION_NAME}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "作者：James Smith",
@@ -432,6 +535,51 @@ fun SettingsScreen(
                                 context.startActivity(Intent.createChooser(intent, "发送邮件"))
                             }
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // 检查更新按钮
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                enabled = updateState !is UpdateState.Checking
+                            ) { viewModel.checkForUpdate() }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Filled.SystemUpdateAlt,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "检查更新",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        when (updateState) {
+                            is UpdateState.Checking -> {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                            is UpdateState.UpToDate -> {
+                                Text(
+                                    text = "已是最新",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            else -> {}
+                        }
                     }
                 }
             }
@@ -618,6 +766,52 @@ private fun AutoStartDelaySelector(
                     },
                     enabled = (customText.toIntOrNull() ?: 0) in 1..600
                 ) { Text("确定") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StepThresholdSelector(
+    selectedThreshold: Int,
+    onThresholdSelected: (Int) -> Unit
+) {
+    data class ThresholdOption(val label: String, val value: Int)
+    val presets = listOf(
+        ThresholdOption("60步/分", 60),
+        ThresholdOption("70步/分", 70),
+        ThresholdOption("80步/分", 80),
+        ThresholdOption("90步/分", 90),
+        ThresholdOption("100步/分", 100),
+        ThresholdOption("120步/分", 120)
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
+    ) {
+        Text(
+            "步行判定阈值（超过此步频视为步行）",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            presets.forEach { option ->
+                FilterChip(
+                    selected = selectedThreshold == option.value,
+                    onClick = { onThresholdSelected(option.value) },
+                    label = {
+                        Text(
+                            option.label,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                )
             }
         }
     }
