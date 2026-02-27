@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -19,7 +20,9 @@ import com.example.dancetimer.data.preferences.ThemeMode
 import com.example.dancetimer.data.preferences.UserPreferencesManager
 import com.example.dancetimer.service.TimerForegroundService
 import com.example.dancetimer.ui.navigation.AppNavigation
+import com.example.dancetimer.ui.screen.components.UpdateDialog
 import com.example.dancetimer.ui.theme.DanceTimerTheme
+import com.example.dancetimer.ui.viewmodel.SettingsViewModel
 import com.example.dancetimer.util.VolumeKeyDetector
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -27,6 +30,9 @@ import kotlinx.coroutines.flow.first
 class MainActivity : ComponentActivity() {
 
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    /** Activity 级别的 SettingsViewModel，供所有页面共享更新状态 */
+    private val settingsViewModel: SettingsViewModel by viewModels()
 
     private val volumeKeyDetector = VolumeKeyDetector(
         onVolumeUpTriggered = {
@@ -57,6 +63,9 @@ class MainActivity : ComponentActivity() {
         // 启动待命服务（MediaSession 锁屏音量键拦截）
         TimerForegroundService.enterStandby(this)
 
+        // 应用启动时静默检查更新
+        settingsViewModel.autoCheckForUpdate()
+
         setContent {
             val context = LocalContext.current
             val prefs = remember { UserPreferencesManager(context) }
@@ -64,6 +73,19 @@ class MainActivity : ComponentActivity() {
 
             DanceTimerTheme(themeMode = themeMode) {
                 val navController = rememberNavController()
+
+                // 根级别更新对话框 — 任何页面都可触发
+                val updateState by settingsViewModel.updateState.collectAsState()
+                UpdateDialog(
+                    state = updateState,
+                    onDownload = { info -> settingsViewModel.startDownload(info) },
+                    onInstall = { downloadId -> settingsViewModel.installApk(downloadId) },
+                    onRetry = { settingsViewModel.checkForUpdate() },
+                    onDismiss = { settingsViewModel.dismissUpdate() },
+                    onSnooze = { settingsViewModel.snoozeUpdate() },
+                    onSkipVersion = { version -> settingsViewModel.skipVersion(version) }
+                )
+
                 AppNavigation(navController = navController)
             }
         }

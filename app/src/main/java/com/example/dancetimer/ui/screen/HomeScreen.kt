@@ -19,28 +19,37 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.example.dancetimer.data.preferences.TriggerMode
+import com.example.dancetimer.data.update.UpdateState
 import com.example.dancetimer.service.TimerState
 import com.example.dancetimer.ui.navigation.Screen
 import com.example.dancetimer.ui.screen.content.TimerFinishedContent
 import com.example.dancetimer.ui.screen.content.TimerIdleContent
 import com.example.dancetimer.ui.screen.content.TimerRunningContent
 import com.example.dancetimer.ui.screen.components.BackgroundGuideDialog
+import com.example.dancetimer.ui.screen.components.UpdateDialog
 import com.example.dancetimer.ui.screen.components.isIgnoringBatteryOptimizations
 import com.example.dancetimer.ui.screen.components.openBatterySettings
 import com.example.dancetimer.ui.theme.DarkSurface
 import com.example.dancetimer.ui.theme.TimerRunningBgDark
 import com.example.dancetimer.ui.theme.TimerRunningBgLight
 import com.example.dancetimer.ui.viewmodel.HomeViewModel
+import com.example.dancetimer.ui.viewmodel.SettingsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     navController: NavHostController,
-    viewModel: HomeViewModel = viewModel()
+    viewModel: HomeViewModel = viewModel(),
+    settingsViewModel: SettingsViewModel = viewModel()
 ) {
     val timerState by viewModel.timerState.collectAsState()
     val defaultRule by viewModel.defaultRule.collectAsState(initial = null)
     val triggerMode by viewModel.triggerMode.collectAsState(initial = TriggerMode.LONG_PRESS)
+    val updateState by settingsViewModel.updateState.collectAsState()
+    val recentLockEvents by viewModel.recentLockEvents.collectAsState(initial = emptyList())
+    val allRulesWithTiers by viewModel.allRulesWithTiers.collectAsState(initial = emptyList())
+    val selectedLockEventRuleId by viewModel.selectedLockEventRuleId.collectAsState()
+    val lockEventRecordEnabled by viewModel.lockEventRecordEnabled.collectAsState(initial = true)
     val context = LocalContext.current
     var showBatteryGuide by remember { mutableStateOf(false) }
     // 每次回到前台重新检测电池优化状态
@@ -65,6 +74,22 @@ fun HomeScreen(
             }
         )
     }
+
+    // 启动时自动检查更新（仅执行一次）
+    LaunchedEffect(Unit) {
+        settingsViewModel.autoCheckForUpdate()
+    }
+
+    // 版本更新对话框（自动检查触发时在主页显示）
+    UpdateDialog(
+        state = updateState,
+        onDownload = { info -> settingsViewModel.startDownload(info) },
+        onInstall = { downloadId -> settingsViewModel.installApk(downloadId) },
+        onRetry = { settingsViewModel.checkForUpdate() },
+        onDismiss = { settingsViewModel.dismissUpdate() },
+        onSnooze = { settingsViewModel.snoozeUpdate() },
+        onSkipVersion = { version: String -> settingsViewModel.skipVersion(version) }
+    )
 
     val isRunning = timerState is TimerState.Running
     val isPaused = (timerState as? TimerState.Running)?.isPaused == true
@@ -135,11 +160,21 @@ fun HomeScreen(
                         ruleName = defaultRule?.rule?.name,
                         triggerMode = triggerMode,
                         isBatteryOptimized = isBatteryOptimized,
+                        recentLockEvents = if (lockEventRecordEnabled) recentLockEvents else emptyList(),
+                        allRules = allRulesWithTiers,
+                        selectedLockEventRuleId = selectedLockEventRuleId,
+                        defaultRuleId = defaultRule?.rule?.id,
                         onStartClick = { viewModel.startTimer() },
                         onRulesClick = {
                             navController.navigate(Screen.PricingRules.route) { launchSingleTop = true }
                         },
-                        onBatteryFixClick = { showBatteryGuide = true }
+                        onBatteryFixClick = { showBatteryGuide = true },
+                        onLockEventRuleSelected = { viewModel.setSelectedLockEventRuleId(it) },
+                        onStartFromLockEvent = { viewModel.startTimerFromLockEvent(it) },
+                        onFinishFromLockEvent = { viewModel.finishFromLockEvent(it) },
+                        onViewAllLockEvents = {
+                            navController.navigate(Screen.LockEventHistory.route) { launchSingleTop = true }
+                        }
                     )
                     is TimerState.Running -> TimerRunningContent(
                         state = state,

@@ -40,6 +40,13 @@ class UserPreferencesManager(private val context: Context) {
         private val KEY_STEP_WALKING_THRESHOLD = intPreferencesKey("step_walking_threshold")
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_BATTERY_GUIDE_SHOWN = booleanPreferencesKey("battery_guide_shown")
+        private val KEY_LOCK_EVENT_RECORD_ENABLED = booleanPreferencesKey("lock_event_record_enabled")
+
+        // ---- 版本更新相关 ----
+        private val KEY_LAST_AUTO_CHECK_TIME = longPreferencesKey("last_auto_check_time")
+        private val KEY_SKIPPED_VERSION = stringPreferencesKey("skipped_version")
+        private val KEY_SNOOZE_UNTIL_TIME = longPreferencesKey("snooze_until_time")
+        private val KEY_LAST_INSTALLED_UPDATE_VERSION = stringPreferencesKey("last_installed_update_version")
     }
 
     // ---- 触发方式 ----
@@ -140,6 +147,19 @@ class UserPreferencesManager(private val context: Context) {
         }
     }
 
+    // ---- 锁屏事件记录 ----
+
+    /** 是否启用锁屏事件记录（默认开启） */
+    val lockEventRecordEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_LOCK_EVENT_RECORD_ENABLED] ?: true
+    }
+
+    suspend fun setLockEventRecordEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_LOCK_EVENT_RECORD_ENABLED] = enabled
+        }
+    }
+
     // ---- 后台运行引导 ----
 
     val batteryGuideShown: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -162,6 +182,65 @@ class UserPreferencesManager(private val context: Context) {
     suspend fun setThemeMode(mode: ThemeMode) {
         context.dataStore.edit { prefs ->
             prefs[KEY_THEME_MODE] = mode.name
+        }
+    }
+
+    // ---- 版本更新偏好 ----
+
+    /** 上次自动检查更新的时间戳（毫秒） */
+    val lastAutoCheckTime: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[KEY_LAST_AUTO_CHECK_TIME] ?: 0L
+    }
+
+    suspend fun setLastAutoCheckTime(timeMillis: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_LAST_AUTO_CHECK_TIME] = timeMillis
+        }
+    }
+
+    /** 用户选择跳过的版本号（如 "0.1.1"），空字符串表示未跳过 */
+    val skippedVersion: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_SKIPPED_VERSION] ?: ""
+    }
+
+    suspend fun setSkippedVersion(version: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_SKIPPED_VERSION] = version
+        }
+    }
+
+    /** "稍后提醒"的截止时间戳（毫秒），0 表示未设置 */
+    val snoozeUntilTime: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[KEY_SNOOZE_UNTIL_TIME] ?: 0L
+    }
+
+    suspend fun setSnoozeUntilTime(timeMillis: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_SNOOZE_UNTIL_TIME] = timeMillis
+        }
+    }
+    /** 用户上次通过应用内更新安装的版本号（如 "0.1.7"），空字符串表示未记录 */
+    val lastInstalledUpdateVersion: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_LAST_INSTALLED_UPDATE_VERSION] ?: ""
+    }
+
+    suspend fun setLastInstalledUpdateVersion(version: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_LAST_INSTALLED_UPDATE_VERSION] = version
+        }
+    }
+    /** 重置所有更新偏好（新版本发布时自动清除旧的跳过/延迟记录） */
+    suspend fun clearUpdateSnooze() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(KEY_SKIPPED_VERSION)
+            prefs.remove(KEY_SNOOZE_UNTIL_TIME)
+        }
+    }
+
+    /** 清除上次应用内更新记录（当有更新的版本时调用） */
+    suspend fun clearLastInstalledUpdateVersion() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(KEY_LAST_INSTALLED_UPDATE_VERSION)
         }
     }
 }

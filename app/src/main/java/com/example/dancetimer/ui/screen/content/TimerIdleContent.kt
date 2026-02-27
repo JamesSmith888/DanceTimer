@@ -13,7 +13,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.dancetimer.data.model.PricingRuleWithTiers
+import com.example.dancetimer.data.model.ScreenLockEvent
 import com.example.dancetimer.data.preferences.TriggerMode
+import com.example.dancetimer.ui.screen.components.LockEventListSection
 import com.example.dancetimer.ui.screen.components.StartButton
 
 /**
@@ -26,9 +29,17 @@ fun TimerIdleContent(
     ruleName: String?,
     triggerMode: TriggerMode,
     isBatteryOptimized: Boolean = false,
+    recentLockEvents: List<ScreenLockEvent> = emptyList(),
+    allRules: List<PricingRuleWithTiers> = emptyList(),
+    selectedLockEventRuleId: Long? = null,
+    defaultRuleId: Long? = null,
     onStartClick: () -> Unit,
     onRulesClick: () -> Unit,
-    onBatteryFixClick: () -> Unit = {}
+    onBatteryFixClick: () -> Unit = {},
+    onLockEventRuleSelected: (Long) -> Unit = {},
+    onStartFromLockEvent: (ScreenLockEvent) -> Unit = {},
+    onFinishFromLockEvent: (ScreenLockEvent) -> Unit = {},
+    onViewAllLockEvents: () -> Unit = {}
 ) {
     val typography = MaterialTheme.typography
     val colors = MaterialTheme.colorScheme
@@ -156,4 +167,19 @@ fun TimerIdleContent(
         color = colors.onSurfaceVariant.copy(alpha = 0.5f),
         textAlign = TextAlign.Center
     )
+
+    // ── 锁屏事件列表 ──
+    if (recentLockEvents.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(32.dp))
+        LockEventListSection(
+            events = recentLockEvents,
+            allRules = allRules,
+            selectedRuleId = selectedLockEventRuleId,
+            defaultRuleId = defaultRuleId,
+            onRuleSelected = onLockEventRuleSelected,
+            onStartFromEvent = onStartFromLockEvent,
+            onFinishFromEvent = onFinishFromLockEvent,
+            onViewAllLockEvents = onViewAllLockEvents
+        )
+    }
 }

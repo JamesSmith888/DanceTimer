@@ -25,13 +25,19 @@ import com.example.dancetimer.data.update.UpdateState
  * - [UpdateState.ReadyToInstall] → "立即安装" 按钮
  * - [UpdateState.Error] → 错误提示 + 重试
  */
+/**
+ * @param onSnooze 用户点击“稍后提醒”，延迟 3 天再自动提示
+ * @param onSkipVersion 用户点击“跳过此版本”，不再自动提示此版本
+ */
 @Composable
 fun UpdateDialog(
     state: UpdateState,
     onDownload: (AppUpdateInfo) -> Unit,
     onInstall: (downloadId: Long) -> Unit,
     onRetry: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onSnooze: () -> Unit = onDismiss,
+    onSkipVersion: (versionName: String) -> Unit = { _ -> onDismiss() }
 ) {
     // 只在有意义的状态下显示对话框
     val shouldShow = state is UpdateState.Available
@@ -67,7 +73,8 @@ fun UpdateDialog(
                     is UpdateState.Available -> AvailableContent(
                         info = state.info,
                         onDownload = { onDownload(state.info) },
-                        onDismiss = onDismiss
+                        onSnooze = onSnooze,
+                        onSkipVersion = { onSkipVersion(state.info.versionName()) }
                     )
 
                     is UpdateState.Downloading -> DownloadingContent(
@@ -101,7 +108,8 @@ fun UpdateDialog(
 private fun AvailableContent(
     info: AppUpdateInfo,
     onDownload: () -> Unit,
-    onDismiss: () -> Unit
+    onSnooze: () -> Unit,
+    onSkipVersion: () -> Unit
 ) {
     // 标题
     Text(
@@ -148,18 +156,27 @@ private fun AvailableContent(
 
     Spacer(modifier = Modifier.height(20.dp))
 
-    // 按钮行
+    // 主按钮（全宽）
+    Button(
+        onClick = onDownload,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text("立即更新")
+    }
+
+    Spacer(modifier = Modifier.height(4.dp))
+
+    // 次要操作
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.End,
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        TextButton(onClick = onDismiss) {
-            Text("稍后再说")
+        TextButton(onClick = onSkipVersion) {
+            Text("跳过此版本", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Spacer(modifier = Modifier.width(8.dp))
-        Button(onClick = onDownload) {
-            Text("立即更新")
+        TextButton(onClick = onSnooze) {
+            Text("稍后提醒")
         }
     }
 }

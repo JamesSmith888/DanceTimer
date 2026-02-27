@@ -19,7 +19,9 @@ sealed class TimerState {
         val ruleId: Long = 0L,
         val isPaused: Boolean = false,
         val isInGracePeriod: Boolean = false,
-        val isAutoStarted: Boolean = false
+        val isAutoStarted: Boolean = false,
+        /** 是否为从锁屏事件回溯启动的计时 */
+        val isBackdated: Boolean = false
     ) : TimerState()
 
     data class Finished(

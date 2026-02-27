@@ -14,4 +14,5 @@ sealed class Screen(val route: String) {
         fun createRoute(recordId: Long) = "record_detail/$recordId"
     }
     data object Settings : Screen("settings")
+    data object LockEventHistory : Screen("lock_event_history")
 }

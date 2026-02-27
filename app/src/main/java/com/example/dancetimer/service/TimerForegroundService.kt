@@ -32,6 +32,7 @@ import com.example.dancetimer.R
 import com.example.dancetimer.data.db.AppDatabase
 import com.example.dancetimer.data.model.DanceRecord
 import com.example.dancetimer.data.model.PriceTier
+import com.example.dancetimer.data.model.ScreenLockEvent
 import com.example.dancetimer.data.preferences.UserPreferencesManager
 import com.example.dancetimer.util.CostCalculator
 import com.example.dancetimer.util.SilentAudioPlayer
@@ -76,8 +77,13 @@ class TimerForegroundService : Service() {
         const val ACTION_CANCEL_AUTO = "com.example.dancetimer.ACTION_CANCEL_AUTO"
         const val ACTION_CONFIRM_AUTO = "com.example.dancetimer.ACTION_CONFIRM_AUTO"
         private const val ACTION_TICK = "com.example.dancetimer.ACTION_TICK"
+        const val ACTION_START_FROM_LOCK_EVENT = "com.example.dancetimer.ACTION_START_FROM_LOCK_EVENT"
+        const val EXTRA_LOCK_EVENT_TIMESTAMP = "lock_event_timestamp"
+        const val EXTRA_LOCK_EVENT_ELAPSED_REALTIME = "lock_event_elapsed_realtime"
         /** AlarmManager 唤醒间隔 — OEM 冻结进程时的保底刷新 */
         private const val ALARM_TICK_INTERVAL_MS = 30_000L
+        /** 锁屏事件通知更新间隔（毫秒）— 待机通知每 60 秒刷新一次最近锁屏信息 */
+        private const val LOCK_EVENT_NOTIFICATION_INTERVAL_MS = 60_000L
 
         /** 步行检测阈值（步/分钟）— 超过此值判定为走路而非跳舞 */
         private const val STEP_WALKING_THRESHOLD_PER_MINUTE = 80
@@ -104,6 +110,10 @@ class TimerForegroundService : Service() {
         @Volatile
         var isStandbyActive = false
             private set
+
+        /** 最近锁屏事件 — 供 UI 层轻量订阅，在服务内更新 */
+        private val _latestLockEvent = MutableStateFlow<ScreenLockEvent?>(null)
+        val latestLockEvent: StateFlow<ScreenLockEvent?> = _latestLockEvent.asStateFlow()
 
         val isRunning: Boolean
             get() = _timerState.value is TimerState.Running
@@ -179,6 +189,66 @@ class TimerForegroundService : Service() {
             }
             context.startService(intent)
         }
+
+        /** 从锁屏事件回溯启动计时 */
+        fun startFromLockEvent(context: Context, event: ScreenLockEvent) {
+            val intent = Intent(context, TimerForegroundService::class.java).apply {
+                action = ACTION_START_FROM_LOCK_EVENT
+                putExtra(EXTRA_LOCK_EVENT_TIMESTAMP, event.timestamp)
+                putExtra(EXTRA_LOCK_EVENT_ELAPSED_REALTIME, event.elapsedRealtime)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        /**
+         * 以锁屏事件直接生成计费结果（跳过计时中状态，直接进入 Finished）。
+         * 在调用方的 coroutineScope 中执行数据库操作。
+         */
+        suspend fun finishFromLockEvent(context: Context, event: ScreenLockEvent) {
+            val db = AppDatabase.getInstance(context)
+            val ruleWithTiers = db.pricingRuleDao().getDefaultRuleWithTiers()
+            val tiers = ruleWithTiers?.sortedTiers ?: emptyList()
+            val ruleName = ruleWithTiers?.rule?.name ?: "未配置规则"
+            val ruleId = ruleWithTiers?.rule?.id ?: 0L
+
+            val now = System.currentTimeMillis()
+            val elapsed = ((now - event.timestamp) / 1000).toInt().coerceAtLeast(0)
+            val cost = CostCalculator.calculate(elapsed, tiers)
+            val songCount = CostCalculator.getSongCount(elapsed, tiers)
+            val isGraceApplied = CostCalculator.isInGracePeriod(elapsed, tiers)
+            val savedAmount = CostCalculator.getGraceSavedAmount(elapsed, tiers)
+
+            // 保存历史记录
+            val record = DanceRecord(
+                startTime = event.timestamp,
+                endTime = now,
+                durationSeconds = elapsed,
+                cost = cost,
+                pricingRuleName = ruleName,
+                pricingRuleId = ruleId,
+                triggerType = DanceRecord.TRIGGER_LOCK_EVENT,
+                autoStartResult = null,
+                screenOffDelaySeconds = 0
+            )
+            db.danceRecordDao().insert(record)
+
+            // 直接设置 Finished 状态
+            _timerState.value = TimerState.Finished(
+                durationSeconds = elapsed,
+                cost = cost,
+                songCount = songCount,
+                ruleName = ruleName,
+                ruleId = ruleId,
+                startTimeMillis = event.timestamp,
+                endTimeMillis = now,
+                isGraceApplied = isGraceApplied,
+                savedAmount = savedAmount
+            )
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -249,6 +319,9 @@ class TimerForegroundService : Service() {
     private var autoConfirmResult: String? = null
     private var startScreenOffDelay: Int = 0
 
+    // 锁屏事件通知更新定时任务
+    private var lockEventNotificationRunnable: Runnable? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -261,6 +334,7 @@ class TimerForegroundService : Service() {
             ACTION_STANDBY -> handleStandby()
             ACTION_START -> handleStart(isAuto = false)
             ACTION_AUTO_START -> handleStart(isAuto = true)
+            ACTION_START_FROM_LOCK_EVENT -> handleStartFromLockEvent(intent)
             ACTION_STOP -> handleStop()
             ACTION_PAUSE -> handlePause()
             ACTION_RESUME -> handleResume()
@@ -283,6 +357,7 @@ class TimerForegroundService : Service() {
         setupMediaSession()
         resetMediaSessionForStandby()
         registerScreenOffReceiver()
+        startLockEventNotificationUpdater()
     }
 
     private fun handleDismiss() {
@@ -292,6 +367,7 @@ class TimerForegroundService : Service() {
         unregisterScreenOffReceiver()
         unregisterUserPresentReceiver()
         stopStepDetection()
+        stopLockEventNotificationUpdater()
         releaseMediaSession()
         SilentAudioPlayer.stop()
         stopTicking()
@@ -781,6 +857,7 @@ class TimerForegroundService : Service() {
             nm.cancel(NOTIFICATION_ID_RUNNING)
             startForeground(NOTIFICATION_ID_STANDBY, buildStandbyNotification())
             resetMediaSessionForStandby()
+            startLockEventNotificationUpdater()
         } else {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -852,6 +929,7 @@ class TimerForegroundService : Service() {
             nm.cancel(NOTIFICATION_ID_RUNNING)
             startForeground(NOTIFICATION_ID_STANDBY, buildStandbyNotification())
             resetMediaSessionForStandby()
+            startLockEventNotificationUpdater()
         } else {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -865,6 +943,7 @@ class TimerForegroundService : Service() {
         unregisterScreenOffReceiver()
         unregisterUserPresentReceiver()
         stopStepDetection()
+        stopLockEventNotificationUpdater()
         releaseMediaSession()
         SilentAudioPlayer.stop()
         serviceScope.cancel()
@@ -1273,6 +1352,9 @@ class TimerForegroundService : Service() {
     private fun handleScreenOff() {
         if (!isStandbyActive) return
 
+        // ── 锁屏事件记录（与自动计时解耦，独立开关控制） ──
+        recordScreenLockEvent()
+
         val current = _timerState.value
 
         // Case 1: 未确认的自动计时 + 用户再次锁屏
@@ -1490,6 +1572,166 @@ class TimerForegroundService : Service() {
     private fun updateStandbyNotificationText(contentText: String) {
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID_STANDBY, buildStandbyNotification(contentText))
+    }
+
+    // ===== 锁屏事件记录 =====
+
+    /**
+     * 记录一条锁屏事件 — 在 handleScreenOff 入口处调用，与自动计时逻辑解耦。
+     * 受 lockEventRecordEnabled 开关控制。
+     */
+    private fun recordScreenLockEvent() {
+        serviceScope.launch {
+            val prefs = UserPreferencesManager(applicationContext)
+            val enabled = prefs.lockEventRecordEnabled.first()
+            if (!enabled) return@launch
+
+            val event = ScreenLockEvent(
+                timestamp = System.currentTimeMillis(),
+                elapsedRealtime = SystemClock.elapsedRealtime()
+            )
+            val dao = AppDatabase.getInstance(applicationContext).screenLockEventDao()
+            dao.insert(event)
+            _latestLockEvent.value = event
+            Log.d(TAG, "已记录锁屏事件: ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(event.timestamp)}")
+
+            // 清理 24 小时前的旧数据
+            dao.deleteOlderThan(System.currentTimeMillis() - 24 * 3600 * 1000L)
+        }
+    }
+
+    /**
+     * 从锁屏事件回溯启动计时 — 将计时起点追溯到锁屏发生时刻。
+     */
+    private fun handleStartFromLockEvent(intent: Intent) {
+        if (_timerState.value is TimerState.Running) return
+
+        val lockTimestamp = intent.getLongExtra(EXTRA_LOCK_EVENT_TIMESTAMP, 0L)
+        val lockElapsedRealtime = intent.getLongExtra(EXTRA_LOCK_EVENT_ELAPSED_REALTIME, 0L)
+        if (lockTimestamp == 0L || lockElapsedRealtime == 0L) return
+
+        // 如果有延迟等待中的自动计时，取消
+        if (isPendingAutoStart) cancelPendingAutoStart()
+
+        isAutoStarted = false
+        hasUserReturned = false
+        startTriggerType = DanceRecord.TRIGGER_LOCK_EVENT
+        autoConfirmResult = null
+        startScreenOffDelay = 0
+
+        serviceScope.launch {
+            val db = AppDatabase.getInstance(applicationContext)
+            val ruleWithTiers = db.pricingRuleDao().getDefaultRuleWithTiers()
+            if (ruleWithTiers == null) {
+                tiers = emptyList()
+                ruleName = "未配置规则"
+                ruleId = 0L
+            } else {
+                tiers = ruleWithTiers.sortedTiers
+                ruleName = ruleWithTiers.rule.name
+                ruleId = ruleWithTiers.rule.id
+            }
+
+            // 回溯：使用锁屏时刻的 elapsedRealtime 作为起始基准
+            startElapsedRealtime = lockElapsedRealtime
+            startWallClock = lockTimestamp
+            chronometerBase = lockTimestamp
+
+            val initialElapsed = ((SystemClock.elapsedRealtime() - startElapsedRealtime) / 1000).toInt()
+            lastReachedSongIndex = CostCalculator.getCurrentSongIndex(initialElapsed, tiers)
+            lastNotifiedCost = 0f
+            lastNotifiedSongCount = -1
+            lastNotifiedInGrace = false
+            lastNotifiedMinute = -1
+            pausedElapsedSeconds = 0
+
+            acquireWakeLock()
+            stopLockEventNotificationUpdater()
+
+            val initCost = CostCalculator.calculate(initialElapsed, tiers)
+            val initSongCount = CostCalculator.getSongCount(initialElapsed, tiers)
+            val initSongIndex = CostCalculator.getCurrentSongIndex(initialElapsed, tiers)
+
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.cancel(NOTIFICATION_ID_STANDBY)
+            startForeground(NOTIFICATION_ID_RUNNING, buildRunningNotification(initialElapsed, initCost, initSongCount))
+            updateMediaSessionForRunning(initCost)
+            VibrationHelper.vibrateFeedback(applicationContext)
+
+            _timerState.value = TimerState.Running(
+                elapsedSeconds = initialElapsed,
+                currentSongIndex = initSongIndex,
+                cost = initCost,
+                songCount = initSongCount,
+                startTimeMillis = startWallClock,
+                tiers = tiers,
+                ruleName = ruleName,
+                ruleId = ruleId,
+                isPaused = false,
+                isInGracePeriod = false,
+                isAutoStarted = false,
+                isBackdated = true
+            )
+
+            startTicking()
+            Log.d(TAG, "从锁屏事件回溯计时: ${CostCalculator.formatDuration(initialElapsed)} 已过")
+        }
+    }
+
+    /**
+     * 启动锁屏事件通知更新器 — 待机模式下每 60 秒更新通知，
+     * 显示最近锁屏到当前的时间与费用信息。
+     * 仅在非计时状态下运行，计时开始时自动暂停。
+     */
+    private fun startLockEventNotificationUpdater() {
+        stopLockEventNotificationUpdater()
+        lockEventNotificationRunnable = object : Runnable {
+            override fun run() {
+                if (!isStandbyActive || _timerState.value is TimerState.Running) return
+                updateLockEventNotification()
+                handler.postDelayed(this, LOCK_EVENT_NOTIFICATION_INTERVAL_MS)
+            }
+        }
+        // 首次延迟 5 秒后启动（避免与其他初始化冲突）
+        handler.postDelayed(lockEventNotificationRunnable!!, 5_000L)
+    }
+
+    private fun stopLockEventNotificationUpdater() {
+        lockEventNotificationRunnable?.let { handler.removeCallbacks(it) }
+        lockEventNotificationRunnable = null
+    }
+
+    /**
+     * 查询最近锁屏事件并更新待机通知 — 不打扰用户（使用低优先级待机通道，无声无震动）
+     */
+    private fun updateLockEventNotification() {
+        serviceScope.launch {
+            val prefs = UserPreferencesManager(applicationContext)
+            val enabled = prefs.lockEventRecordEnabled.first()
+            if (!enabled) return@launch
+
+            val dao = AppDatabase.getInstance(applicationContext).screenLockEventDao()
+            val latest = dao.getLatestEvent() ?: return@launch
+
+            // 仅展示 1 小时内的锁屏事件
+            val ageMs = System.currentTimeMillis() - latest.timestamp
+            if (ageMs > 3600 * 1000L) return@launch
+
+            val elapsedSeconds = (ageMs / 1000).toInt()
+            val db = AppDatabase.getInstance(applicationContext)
+            val ruleWithTiers = db.pricingRuleDao().getDefaultRuleWithTiers()
+            if (ruleWithTiers != null) {
+                val cost = CostCalculator.calculate(elapsedSeconds, ruleWithTiers.sortedTiers)
+                val songCount = CostCalculator.getSongCount(elapsedSeconds, ruleWithTiers.sortedTiers)
+                val timeStr = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                    .format(java.util.Date(latest.timestamp))
+                val durationStr = CostCalculator.formatDurationChinese(elapsedSeconds)
+                val costStr = CostCalculator.formatCost(cost)
+                val songStr = if (songCount > 0) "${songCount}曲" else "未满1曲"
+                val notificationText = "最近锁屏 $timeStr · $durationStr · $songStr · $costStr"
+                updateStandbyNotificationText(notificationText)
+            }
+        }
     }
 
     /**

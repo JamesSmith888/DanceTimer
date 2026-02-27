@@ -9,16 +9,18 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.dancetimer.data.model.DanceRecord
 import com.example.dancetimer.data.model.PriceTier
 import com.example.dancetimer.data.model.PricingRule
+import com.example.dancetimer.data.model.ScreenLockEvent
 
 @Database(
-    entities = [PricingRule::class, PriceTier::class, DanceRecord::class],
-    version = 2,
+    entities = [PricingRule::class, PriceTier::class, DanceRecord::class, ScreenLockEvent::class],
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun pricingRuleDao(): PricingRuleDao
     abstract fun danceRecordDao(): DanceRecordDao
+    abstract fun screenLockEventDao(): ScreenLockEventDao
 
     companion object {
         @Volatile
@@ -37,6 +39,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v2 → v3：新增 screen_lock_events 表，存储锁屏事件用于回溯计时。
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS screen_lock_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        elapsedRealtime INTEGER NOT NULL
+                    )"""
+                )
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -44,7 +61,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "dance_timer.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

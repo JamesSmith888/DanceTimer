@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
@@ -16,6 +17,7 @@ import androidx.core.content.getSystemService
 import com.example.dancetimer.BuildConfig
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,7 +52,7 @@ class UpdateManager(private val context: Context) {
         private val PLATFORM = Platform.GITEE
 
         /** 仓库所有者 */
-        private const val REPO_OWNER = "JamesSmith888"
+        private const val REPO_OWNER = "orgYangxin"
 
         /** 仓库名 */
         private const val REPO_NAME = "DanceTimer"
@@ -79,20 +81,69 @@ class UpdateManager(private val context: Context) {
     // ---------- 公开 API ----------
 
     /**
+     * 获取当前实际安装的版本号。
+     *
+     * 优先通过 [PackageManager] 读取系统包数据库中的版本，
+     * 落底使用 [BuildConfig.VERSION_NAME]。
+     *
+     * 说明：`BuildConfig.VERSION_NAME` 是编译时常量，若 APK 构建时未及时更新
+     * versionName，则与发布标签不一致。PackageManager 读取的是同一个值，
+     * 但在某些设备上应用内更新后进程未重启时，PackageManager 能返回新包的版本。
+     */
+    fun getInstalledVersionName(): String {
+        return try {
+            val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName, PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            pkgInfo.versionName ?: BuildConfig.VERSION_NAME
+        } catch (e: Exception) {
+            Log.w(TAG, "获取 PackageManager 版本失败，回退到 BuildConfig", e)
+            BuildConfig.VERSION_NAME
+        }
+    }
+
+    /**
      * 请求远端最新 Release 信息。
      *
+     * @param lastInstalledUpdateVersion 用户上次通过应用内更新安装的版本号（可为null）。
+     *   若远端版本等于此值，表示用户已通过应用内更新安装过该版本，视为已是最新。
      * @return [AppUpdateInfo] 如果有更新可用；`null` 如果已是最新；抛异常表示请求失败。
      */
-    suspend fun checkForUpdate(): AppUpdateInfo? = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdate(
+        lastInstalledUpdateVersion: String? = null
+    ): AppUpdateInfo? = withContext(Dispatchers.IO) {
         val response = fetchLatestRelease()
-        val remoteVersion = response.tagName.trimStart('v', 'V')
-        val currentVersion = BuildConfig.VERSION_NAME
+        val remoteVersion = response.tagName.trimStart('v', 'V').trim()
+        val installedVersion = getInstalledVersionName().trimStart('v', 'V').trim()
+        val buildConfigVersion = BuildConfig.VERSION_NAME.trimStart('v', 'V').trim()
 
-        Log.d(TAG, "远端版本: $remoteVersion, 当前版本: $currentVersion")
+        Log.d(TAG, "远端版本: '$remoteVersion', " +
+                "PackageManager版本: '$installedVersion', " +
+                "BuildConfig版本: '$buildConfigVersion', " +
+                "上次应用内更新版本: '${lastInstalledUpdateVersion ?: ""}'")
+
+        // 优先使用 PackageManager 版本（更可靠）
+        val currentVersion = installedVersion
+
+        // 若远端版本等于用户上次通过应用内更新安装的版本，视为已安装
+        if (!lastInstalledUpdateVersion.isNullOrEmpty()) {
+            val lastInstalled = lastInstalledUpdateVersion.trimStart('v', 'V').trim()
+            if (compareVersions(remoteVersion, lastInstalled) <= 0) {
+                Log.d(TAG, "远端版本 '$remoteVersion' <= 上次安装版本 '$lastInstalled'，视为已是最新")
+                return@withContext null
+            }
+        }
 
         if (compareVersions(remoteVersion, currentVersion) > 0) {
+            Log.d(TAG, "发现新版本: '$remoteVersion' > '$currentVersion'")
             response.toAppUpdateInfo()
         } else {
+            Log.d(TAG, "已是最新版本: '$remoteVersion' <= '$currentVersion'")
             null
         }
     }
@@ -106,6 +157,20 @@ class UpdateManager(private val context: Context) {
      */
     fun startDownload(url: String, fileName: String): Long {
         cancelActiveDownload()
+
+        // 删除同名旧文件，避免 DownloadManager 追加序号或复用缓存
+        try {
+            val target = java.io.File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                fileName
+            )
+            if (target.exists()) {
+                target.delete()
+                Log.d(TAG, "已删除旧文件: $fileName")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "清理旧文件失败（忽略）: ${e.message}")
+        }
 
         val dm = context.getSystemService<DownloadManager>()
             ?: throw IllegalStateException("DownloadManager 不可用")
@@ -254,7 +319,8 @@ class UpdateManager(private val context: Context) {
             Platform.GITHUB ->
                 "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
             Platform.GITEE ->
-                "https://gitee.com/api/v5/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
+                // Gitee 的 /releases/latest 不一定返回最高版本，改用列表接口后在客户端找最新
+                "https://gitee.com/api/v5/repos/$REPO_OWNER/$REPO_NAME/releases?page=1&per_page=100&direction=desc"
         }
 
     /**
@@ -267,7 +333,6 @@ class UpdateManager(private val context: Context) {
             connectTimeout = CONNECT_TIMEOUT
             readTimeout = READ_TIMEOUT
             setRequestProperty("Accept", "application/json")
-            // GitHub API 推荐使用 User-Agent
             setRequestProperty("User-Agent", "DanceTimer-Android/${BuildConfig.VERSION_NAME}")
         }
 
@@ -284,7 +349,7 @@ class UpdateManager(private val context: Context) {
 
             return when (PLATFORM) {
                 Platform.GITHUB -> parseGitHubRelease(body)
-                Platform.GITEE -> parseGiteeRelease(body)
+                Platform.GITEE -> parseGiteeReleases(body)
             }
         } finally {
             conn.disconnect()
@@ -323,13 +388,42 @@ class UpdateManager(private val context: Context) {
 
     // ---- Gitee JSON 解析 ----
 
-    private fun parseGiteeRelease(json: String): ReleaseResponse {
-        val gt = gson.fromJson(json, GiteeRelease::class.java)
+    /**
+     * 解析 Gitee 的 releases 列表响应，找到版本号最高的非 pre-release 版本。
+     *
+     * Gitee 的 `/releases/latest` 接口并不可靠地返回最新版本，
+     * 因此改用列表接口 + 客户端版本号比较来筛选。
+     */
+    private fun parseGiteeReleases(json: String): ReleaseResponse {
+        val type = object : TypeToken<List<GiteeRelease>>() {}.type
+        val releases: List<GiteeRelease> = gson.fromJson(json, type)
+
+        if (releases.isEmpty()) {
+            throw UpdateException("未找到任何 Release")
+        }
+
+        // 过滤掉 prerelease，按版本号降序排列，取版本最高的
+        val best = releases
+            .filter { !it.prerelease }
+            .maxByOrNull { release ->
+                val ver = release.tagName.trimStart('v', 'V').trim()
+                ver.split(".").map { it.toIntOrNull() ?: 0 }
+                    .let { parts ->
+                        // 转换为可比较的整数：major*1000000 + minor*1000 + patch
+                        parts.getOrElse(0) { 0 } * 1_000_000L +
+                        parts.getOrElse(1) { 0 } * 1_000L +
+                        parts.getOrElse(2) { 0 }
+                    }
+            }
+            ?: releases.first() // 如果全是 prerelease，取第一个
+
+        Log.d(TAG, "Gitee releases 共 ${releases.size} 个，版本最高: ${best.tagName}")
+
         return ReleaseResponse(
-            tagName = gt.tagName,
-            name = gt.name ?: gt.tagName,
-            body = gt.body ?: "",
-            assets = gt.assets.map { asset ->
+            tagName = best.tagName,
+            name = best.name ?: best.tagName,
+            body = best.body ?: "",
+            assets = best.assets.map { asset ->
                 ReleaseAsset(
                     name = asset.name,
                     downloadUrl = asset.browserDownloadUrl
@@ -343,6 +437,7 @@ class UpdateManager(private val context: Context) {
         @SerializedName("tag_name") val tagName: String,
         val name: String?,
         val body: String?,
+        val prerelease: Boolean = false,
         val assets: List<GiteeAsset>
     )
 
@@ -392,6 +487,21 @@ class UpdateManager(private val context: Context) {
             if (p1 != p2) return p1 - p2
         }
         return 0
+    }
+
+    /**
+     * 判断给定的版本号是否严格新于当前应用版本。
+     *
+     * 同时比较 PackageManager 版本和 BuildConfig 版本，取较高者。
+     * 可用于 ViewModel 层做二次校验，防止因构建/发布流程问题导致误报。
+     */
+    fun isNewerThanCurrent(versionName: String): Boolean {
+        val remote = versionName.trimStart('v', 'V').trim()
+        val pkgVersion = getInstalledVersionName().trimStart('v', 'V').trim()
+        val buildVersion = BuildConfig.VERSION_NAME.trimStart('v', 'V').trim()
+        // 取 PackageManager 和 BuildConfig 中较高的版本作为当前版本
+        val current = if (compareVersions(pkgVersion, buildVersion) >= 0) pkgVersion else buildVersion
+        return compareVersions(remote, current) > 0
     }
 
     /** 更新相关的异常 */

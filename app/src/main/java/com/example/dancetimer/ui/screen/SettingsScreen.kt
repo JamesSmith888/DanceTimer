@@ -49,7 +49,6 @@ import com.example.dancetimer.data.preferences.TriggerMode
 import com.example.dancetimer.data.update.UpdateState
 import com.example.dancetimer.ui.navigation.Screen
 import com.example.dancetimer.ui.screen.components.BackgroundGuideDialog
-import com.example.dancetimer.ui.screen.components.UpdateDialog
 import com.example.dancetimer.ui.screen.components.isIgnoringBatteryOptimizations
 import com.example.dancetimer.ui.viewmodel.SettingsViewModel
 
@@ -57,7 +56,9 @@ import com.example.dancetimer.ui.viewmodel.SettingsViewModel
 @Composable
 fun SettingsScreen(
     navController: NavHostController,
-    viewModel: SettingsViewModel = viewModel()
+    viewModel: SettingsViewModel = viewModel(
+        viewModelStoreOwner = LocalContext.current as androidx.activity.ComponentActivity
+    )
 ) {
     val triggerMode by viewModel.triggerMode.collectAsState(initial = TriggerMode.LONG_PRESS)
     val vibrateOnTier by viewModel.vibrateOnTier.collectAsState(initial = true)
@@ -65,8 +66,10 @@ fun SettingsScreen(
     val autoStartDelay by viewModel.autoStartDelaySeconds.collectAsState(initial = 180)
     val stepDetectionEnabled by viewModel.stepDetectionEnabled.collectAsState(initial = false)
     val stepWalkingThreshold by viewModel.stepWalkingThreshold.collectAsState(initial = 80)
+    val lockEventRecordEnabled by viewModel.lockEventRecordEnabled.collectAsState(initial = true)
     val themeMode by viewModel.themeMode.collectAsState(initial = ThemeMode.SYSTEM)
     val updateState by viewModel.updateState.collectAsState()
+    val pendingUpdate by viewModel.pendingUpdateInfo.collectAsState()
     val context = LocalContext.current
     // 需要 Activity 引用来判断 shouldShowRequestPermissionRationale
     val activity = context as? android.app.Activity
@@ -109,15 +112,6 @@ fun SettingsScreen(
             }
         )
     }
-
-    // 版本更新对话框
-    UpdateDialog(
-        state = updateState,
-        onDownload = { info -> viewModel.startDownload(info) },
-        onInstall = { downloadId -> viewModel.installApk(downloadId) },
-        onRetry = { viewModel.checkForUpdate() },
-        onDismiss = { viewModel.dismissUpdate() }
-    )
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -400,6 +394,22 @@ fun SettingsScreen(
                         modifier = Modifier.padding(horizontal = 16.dp),
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
                     )
+                    // 锁屏时间记录
+                    SettingSwitchItem(
+                        title = "记录锁屏时间",
+                        description = buildAnnotatedString {
+                            append(if (lockEventRecordEnabled)
+                                "待机模式下记录锁屏时间，帮助回溯计时"
+                            else
+                                "开启后可在首页查看最近锁屏时间，一键回溯计时")
+                        },
+                        checked = lockEventRecordEnabled,
+                        onCheckedChange = { viewModel.setLockEventRecordEnabled(it) }
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+                    )
                     // 后台运行设置
                     Row(
                         modifier = Modifier
@@ -502,11 +512,20 @@ fun SettingsScreen(
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "作者：James Smith",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    // 作者邮箱 — 长按可选中复制，点击打开邮件客户端
+                    SelectionContainer {
+                        Text(
+                            text = "作者：jiazhutianxiadiyi@gmail.com",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.clickable {
+                                val intent = Intent(Intent.ACTION_SENDTO).apply {
+                                    data = Uri.parse("mailto:jiazhutianxiadiyi@gmail.com")
+                                }
+                                context.startActivity(Intent.createChooser(intent, "发送邮件"))
+                            }
+                        )
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
                     // GitHub 链接 — 点击打开浏览器
                     Text(
@@ -519,29 +538,13 @@ fun SettingsScreen(
                             uriHandler.openUri("https://github.com/JamesSmith888/DanceTimer")
                         }
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    // 邮箱 — 长按可选中复制，点击打开邮件客户端
-                    SelectionContainer {
-                        Text(
-                            text = "jiazhutianxiadiyi@gmail.com",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                textDecoration = TextDecoration.Underline
-                            ),
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.clickable {
-                                val intent = Intent(Intent.ACTION_SENDTO).apply {
-                                    data = Uri.parse("mailto:jiazhutianxiadiyi@gmail.com")
-                                }
-                                context.startActivity(Intent.createChooser(intent, "发送邮件"))
-                            }
-                        )
-                    }
 
                     Spacer(modifier = Modifier.height(12.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Spacer(modifier = Modifier.height(4.dp))
 
                     // 检查更新按钮
+                    val hasPendingUpdate = pendingUpdate != null
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -555,15 +558,25 @@ fun SettingsScreen(
                             Icons.Filled.SystemUpdateAlt,
                             contentDescription = null,
                             modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = if (hasPendingUpdate) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "检查更新",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "检查更新",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (hasPendingUpdate) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurface
+                            )
+                            if (hasPendingUpdate) {
+                                Text(
+                                    text = "发现新版本 v${pendingUpdate!!.versionName()}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                         when (updateState) {
                             is UpdateState.Checking -> {
                                 CircularProgressIndicator(
@@ -573,12 +586,24 @@ fun SettingsScreen(
                             }
                             is UpdateState.UpToDate -> {
                                 Text(
-                                    text = "已是最新",
+                                    text = "✅ 已是最新",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            else -> {}
+                            else -> {
+                                if (hasPendingUpdate) {
+                                    // 红点指示器
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(
+                                                color = MaterialTheme.colorScheme.error,
+                                                shape = androidx.compose.foundation.shape.CircleShape
+                                            )
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -785,6 +810,9 @@ private fun StepThresholdSelector(
         ThresholdOption("100步/分", 100),
         ThresholdOption("120步/分", 120)
     )
+    val isCustom = selectedThreshold !in presets.map { it.value }
+    var showCustomInput by remember { mutableStateOf(isCustom) }
+    var customText by remember { mutableStateOf(if (isCustom) selectedThreshold.toString() else "") }
 
     Column(
         modifier = Modifier
@@ -803,8 +831,11 @@ private fun StepThresholdSelector(
         ) {
             presets.forEach { option ->
                 FilterChip(
-                    selected = selectedThreshold == option.value,
-                    onClick = { onThresholdSelected(option.value) },
+                    selected = selectedThreshold == option.value && !showCustomInput,
+                    onClick = {
+                        showCustomInput = false
+                        onThresholdSelected(option.value)
+                    },
                     label = {
                         Text(
                             option.label,
@@ -812,6 +843,55 @@ private fun StepThresholdSelector(
                         )
                     }
                 )
+            }
+            FilterChip(
+                selected = showCustomInput || isCustom,
+                onClick = {
+                    if (showCustomInput) {
+                        showCustomInput = false
+                    } else {
+                        customText = selectedThreshold.toString()
+                        showCustomInput = true
+                    }
+                },
+                label = {
+                    Text(
+                        if (isCustom && !showCustomInput)
+                            "自定义:${selectedThreshold}步/分"
+                        else
+                            "自定义",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            )
+        }
+
+        // 自定义输入框
+        if (showCustomInput) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = customText,
+                    onValueChange = { customText = it.filter { c -> c.isDigit() } },
+                    label = { Text("步/分（10〜300）") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    textStyle = MaterialTheme.typography.bodyMedium
+                )
+                FilledTonalButton(
+                    onClick = {
+                        val v = customText.toIntOrNull() ?: 0
+                        if (v in 10..300) {
+                            onThresholdSelected(v)
+                            showCustomInput = false
+                        }
+                    },
+                    enabled = (customText.toIntOrNull() ?: 0) in 10..300
+                ) { Text("确定") }
             }
         }
     }

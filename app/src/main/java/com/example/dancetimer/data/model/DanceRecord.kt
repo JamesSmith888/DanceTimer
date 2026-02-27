@@ -42,6 +42,8 @@ data class DanceRecord(
     companion object {
         const val TRIGGER_MANUAL = "manual"
         const val TRIGGER_AUTO   = "auto_screen_off"
+        /** 从锁屏事件回溯启动 */
+        const val TRIGGER_LOCK_EVENT = "lock_event_backdate"
 
         /** 用户在通知或 App 内主动确认 */
         const val RESULT_CONFIRMED_USER = "confirmed_user"
