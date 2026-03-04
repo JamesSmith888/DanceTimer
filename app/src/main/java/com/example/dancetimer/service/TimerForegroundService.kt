@@ -27,6 +27,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.dancetimer.LockScreenTimerActivity
 import com.example.dancetimer.MainActivity
 import com.example.dancetimer.R
 import com.example.dancetimer.data.db.AppDatabase
@@ -62,9 +63,11 @@ class TimerForegroundService : Service() {
         private const val CHANNEL_ID_STANDBY = "dance_timer_standby"
         private const val CHANNEL_ID_RUNNING = "dance_timer_running"
         private const val CHANNEL_ID_ALERT = "dance_timer_alert"
+        private const val CHANNEL_ID_BILLING = "dance_timer_billing_peek"
         private const val NOTIFICATION_ID_STANDBY = 1001
         private const val NOTIFICATION_ID_RUNNING = 1002
         private const val NOTIFICATION_ID_ALERT = 1003
+        private const val NOTIFICATION_ID_BILLING_PEEK = 1004
         private const val LONG_PRESS_MS = 1500L // 长按阈值（毫秒）
 
         const val ACTION_START = "com.example.dancetimer.ACTION_START"
@@ -279,6 +282,8 @@ class TimerForegroundService : Service() {
     private var lastNotifiedSongCount: Int = -1
     private var lastNotifiedInGrace: Boolean = false
     private var lastNotifiedMinute: Int = -1
+    // 上次触发锁屏亮屏的曲数（独立追踪，初始 0 使第一次计费即可触发）
+    private var lastBilledSongCountForLockScreen: Int = 0
     // 暂停时累计的已过秒数
     private var pausedElapsedSeconds: Int = 0
     // 用于通知 Chronometer 的基准时间（恢复后调整）
@@ -579,6 +584,7 @@ class TimerForegroundService : Service() {
             lastNotifiedSongCount = -1
             lastNotifiedInGrace = false
             lastNotifiedMinute = -1
+            lastBilledSongCountForLockScreen = CostCalculator.getSongCount(initialElapsed, tiers)
             pausedElapsedSeconds = 0
 
             // 获取 WakeLock
@@ -605,6 +611,8 @@ class TimerForegroundService : Service() {
                 vibrateAutoStartAlert(applicationContext)
                 // 发送高优先级 heads-up 弹头通知
                 fireAutoStartAlertNotification()
+                // 唤醒屏幕并显示锁屏计时悬浮页
+                startLockScreenActivity(initSongCount, initCost, initialElapsed, isAutoStart = true)
             } else {
                 VibrationHelper.vibrateFeedback(applicationContext)
             }
@@ -715,8 +723,10 @@ class TimerForegroundService : Service() {
         val songCount = CostCalculator.getSongCount(elapsed, tiers)
         val inGrace = CostCalculator.isInGracePeriod(elapsed, tiers)
 
-        // 检查是否进入新歌 → 震动提醒
-        if (songIndex > lastReachedSongIndex && songIndex > 0) {
+        // 检查是否进入新歌 → 震动提醒 + 锁屏亮屏提醒
+        // songCount is billing-based (triggers at song midpoint), matching when cost increments.
+        if (songCount > lastBilledSongCountForLockScreen) {
+            Log.d(TAG, "New song billed: songCount=$songCount lastBilled=$lastBilledSongCountForLockScreen cost=$cost elapsed=${elapsed}s")
             serviceScope.launch {
                 val prefs = UserPreferencesManager(applicationContext)
                 val shouldVibrate = prefs.vibrateOnTier.first()
@@ -724,6 +734,14 @@ class TimerForegroundService : Service() {
                     VibrationHelper.vibrateFeedback(applicationContext)
                 }
             }
+            postBillingPeekNotification(songCount, cost, elapsed)
+            // Wake screen and show full-screen lock screen overlay
+            startLockScreenActivity(songCount, cost, elapsed, isAutoStart = false)
+            lastBilledSongCountForLockScreen = songCount
+        }
+
+        // Keep lastReachedSongIndex in sync
+        if (songIndex > lastReachedSongIndex) {
             lastReachedSongIndex = songIndex
         }
 
@@ -759,16 +777,20 @@ class TimerForegroundService : Service() {
         val costChanged = cost != lastNotifiedCost
         val currentMinute = elapsed / 60
         val minuteChanged = currentMinute != lastNotifiedMinute
+        // During the first minute, update every second so the seconds display stays live.
+        // After the first minute, update only when the displayed content changes.
+        val inFirstMinute = currentMinute == 0
         val needsNotificationUpdate = costChanged
                 || songCount != lastNotifiedSongCount
                 || inGrace != lastNotifiedInGrace
                 || minuteChanged
                 || inGrace
+                || inFirstMinute
         if (needsNotificationUpdate) {
             val graceRemaining = if (inGrace) CostCalculator.getGraceRemainingSeconds(elapsed, tiers) else 0
             val notification = buildRunningNotification(elapsed, cost, songCount, inGrace, graceRemaining)
             startForeground(NOTIFICATION_ID_RUNNING, notification)
-            Log.d(TAG, "通知已更新: elapsed=${elapsed}s, min=$currentMinute, 已计${songCount}曲, cost=$cost")
+            Log.d(TAG, "Notification updated: elapsed=${elapsed}s min=$currentMinute songs=$songCount cost=$cost inGrace=$inGrace")
             lastNotifiedCost = cost
             lastNotifiedSongCount = songCount
             lastNotifiedInGrace = inGrace
@@ -1032,6 +1054,13 @@ class TimerForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
 
+            // Log overall notification permission state
+            val areNotificationsEnabled = nm.areNotificationsEnabled()
+            Log.d(TAG, "createNotificationChannel: areNotificationsEnabled=$areNotificationsEnabled")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                Log.d(TAG, "createNotificationChannel: canUseFullScreenIntent=${nm.canUseFullScreenIntent()}")
+            }
+
             // 清理旧版通知渠道
             nm.deleteNotificationChannel("dance_timer_channel")
 
@@ -1073,6 +1102,30 @@ class TimerForegroundService : Service() {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             nm.createNotificationChannel(alertChannel)
+
+            // 计费提醒渠道 — 高优先级，无声无震动（震动由 VibrationHelper 负责），短暂出现后自动消失
+            val billingChannel = NotificationChannel(
+                CHANNEL_ID_BILLING,
+                "计费提醒",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "新曲计费时的锁屏唤醒提醒（无声无震动，仅亮屏）"
+                setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            nm.createNotificationChannel(billingChannel)
+
+            // Log each channel's actual importance and lock screen visibility as registered by system
+            listOf(CHANNEL_ID_STANDBY, CHANNEL_ID_RUNNING, CHANNEL_ID_ALERT, CHANNEL_ID_BILLING).forEach { id ->
+                val ch = nm.getNotificationChannel(id)
+                if (ch != null) {
+                    Log.d(TAG, "channel[$id]: importance=${ch.importance} lockscreen=${ch.lockscreenVisibility} blocked=${ch.importance == NotificationManager.IMPORTANCE_NONE}")
+                } else {
+                    Log.w(TAG, "channel[$id]: NOT FOUND after creation")
+                }
+            }
         }
     }
 
@@ -1093,13 +1146,17 @@ class TimerForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val displayText = contentText ?: "长按音量+ 开始 · 长按音量- 停止"
+        val displayText = contentText ?: "长按音量+ 开始  ·  长按音量- 停止"
+        val expandedText = contentText
+            ?: "长按音量+ 开始  ·  长按音量- 停止\n请勿关闭本通知，否则锁屏后将无法通过音量键控制。"
+        val largeIconBitmap = android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
         return NotificationCompat.Builder(this, CHANNEL_ID_STANDBY)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("计时器待命中 (保持通知开启)")
+            .setLargeIcon(largeIconBitmap)
+            .setContentTitle("计时器待命")
+            .setSubText("保持通知开启")
             .setContentText(displayText)
-            .setStyle(NotificationCompat.BigTextStyle()
-                .bigText(if (contentText != null) contentText else "长按音量+ 开始 · 长按音量- 停止。\n请勿关闭本通知，否则锁屏后将无法通过音量键控制。"))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(expandedText))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -1169,15 +1226,43 @@ class TimerForegroundService : Service() {
         val costStr = CostCalculator.formatCost(cost)
         val songPart = if (songCount > 0) "已计${songCount}曲" else "未满1曲"
         val totalMinutes = elapsedSeconds / 60
-        // 标题：分钟优先 · 曲数 · 费用（时间由 Chronometer 系统渲染，不受进程冻结影响）
+        // Show seconds for the first minute so the timer feels live from the start
+        val timeDisplay = if (totalMinutes > 0) "${totalMinutes}分钟" else "${elapsedSeconds}秒"
+        // Title: concise state label only — metrics go in contentText for cleaner layout
         val title = when {
-            isAutoStarted -> "自动 | ${totalMinutes}分钟 · $songPart · $costStr"
-            isPaused -> "已暂停 | ${totalMinutes}分钟 · $songPart · $costStr"
-            else -> "${totalMinutes}分钟 · $songPart · $costStr"
+            isAutoStarted && hasUserReturned -> "自动计时 — 请确认"
+            isAutoStarted -> "自动计时中"
+            isPaused -> "已暂停"
+            else -> "计时中"
         }
-        val contentText = if (isInGrace) "🛡️ 缓冲 ${graceRemaining}s" else null
-        // Chronometer 基准：SystemUI 渲染，进程冻结也能正常走秒
+        // ContentText: key metrics — rendered in the dedicated body area
+        val contentText = when {
+            isInGrace -> "缓冲 ${graceRemaining}s  ·  $timeDisplay  ·  $songPart  ·  $costStr"
+            isPaused -> "$timeDisplay  ·  $songPart  ·  $costStr  ·  长按音量+ 继续"
+            else -> "$timeDisplay  ·  $songPart  ·  $costStr"
+        }
+
+        val largeIcon = android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher)
+        // Chronometer base: rendered by SystemUI, ticks even when process is frozen by OEM
         val chronometerBase = System.currentTimeMillis() - elapsedSeconds * 1000L
+
+        // Public version shown on lock screen when user hasn't unlocked —
+        // identical content since VISIBILITY_PUBLIC is set, but some OEM ROMs
+        // (MIUI/ColorOS) require an explicit publicVersion to show full detail.
+        val publicVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID_RUNNING)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setLargeIcon(largeIcon)
+                .setContentTitle(title)
+                .setContentText(contentText)
+                .setSubText(ruleName)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setUsesChronometer(!isPaused)
+                .apply { if (!isPaused) { setWhen(chronometerBase); setShowWhen(true) } }
+                .build()
+        } else null
+
+        Log.d(TAG, "buildRunningNotification: elapsed=${elapsedSeconds}s title=$title content=$contentText publicVersion=${publicVersion != null}")
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID_RUNNING)
@@ -1187,7 +1272,7 @@ class TimerForegroundService : Service() {
         }
 
         if (isAutoStarted && hasUserReturned) {
-            // 用户已解锁返回 — 显示确认/取消按钮
+            // User has unlocked — show confirm/cancel actions
             val confirmAction = Notification.Action.Builder(
                 android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_play_notification),
                 "继续计时",
@@ -1199,10 +1284,12 @@ class TimerForegroundService : Service() {
                 cancelAutoIntent
             ).build()
             builder.setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setLargeIcon(largeIcon)
                 .setContentTitle(title)
-                .setSubText("⚠ 已自动计时 ${totalMinutes}分钟 — 确认或取消")
+                .setContentText(contentText)
+                .setSubText("已自动计时 $timeDisplay — 确认或取消")
                 .setOngoing(true)
-                .setOnlyAlertOnce(false) // 允许每次提醒
+                .setOnlyAlertOnce(false)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setCategory(Notification.CATEGORY_STOPWATCH)
                 .setUsesChronometer(true)
@@ -1213,7 +1300,7 @@ class TimerForegroundService : Service() {
                 .addAction(cancelAction)
                 .setColor(0xFFE65100.toInt())
         } else if (isAutoStarted) {
-            // 锁屏中 — 显示取消/停止按钮
+            // Screen locked — show cancel/stop actions
             val cancelAction = Notification.Action.Builder(
                 android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_stop_notification),
                 "取消",
@@ -1225,7 +1312,9 @@ class TimerForegroundService : Service() {
                 stopIntent
             ).build()
             builder.setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setLargeIcon(largeIcon)
                 .setContentTitle(title)
+                .setContentText(contentText)
                 .setSubText("息屏触发 · 误触请取消")
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -1250,7 +1339,9 @@ class TimerForegroundService : Service() {
                 stopIntent
             ).build()
             builder.setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setLargeIcon(largeIcon)
                 .setContentTitle(title)
+                .setContentText(contentText)
                 .setSubText(ruleName)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -1274,7 +1365,9 @@ class TimerForegroundService : Service() {
                 stopIntent
             ).build()
             builder.setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setLargeIcon(largeIcon)
                 .setContentTitle(title)
+                .setContentText(contentText)
                 .setSubText(ruleName)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -1287,16 +1380,17 @@ class TimerForegroundService : Service() {
                 .addAction(pauseAction)
                 .addAction(stopAction)
                 .setColor(0xFF6750A4.toInt())
+                .apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        setColorized(true)
+                    }
+                }
         }
 
-        // 停止缓冲倒计时
-        if (contentText != null) {
-            builder.setContentText(contentText)
-        }
+        // Explicit publicVersion ensures full notification content is shown on lock screen
+        // on OEM ROMs (MIUI/ColorOS) that may otherwise collapse or redact the notification.
+        publicVersion?.let { builder.setPublicVersion(it) }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            builder.setColorized(true)
-        }
 
         return builder.build()
     }
@@ -1978,6 +2072,13 @@ class TimerForegroundService : Service() {
      * 通知自动 5 秒后消失
      */
     private fun fireAutoStartAlertNotification() {
+        val nm = getSystemService(NotificationManager::class.java)
+        val areNotificationsEnabled = nm.areNotificationsEnabled()
+        val alertChannel = nm.getNotificationChannel(CHANNEL_ID_ALERT)
+        val channelImportance = alertChannel?.importance ?: -1
+        val canFsi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) nm.canUseFullScreenIntent() else true
+        Log.d(TAG, "fireAutoStartAlert: notifEnabled=$areNotificationsEnabled channelImportance=$channelImportance canUseFullScreenIntent=$canFsi")
+
         val contentIntent = PendingIntent.getActivity(
             this, 10,
             Intent(this, MainActivity::class.java).apply {
@@ -2001,7 +2102,9 @@ class TimerForegroundService : Service() {
             Notification.Builder(this)
         }
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("⏱ 已自动开始计时")
+            .setLargeIcon(android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher))
+            .setContentTitle("自动计时已触发")
+            .setSubText("舞蹈计时器")
             .setContentText("息屏触发 · 误触请点击取消")
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
@@ -2016,11 +2119,164 @@ class TimerForegroundService : Service() {
                 ).build()
             )
             .setColor(0xFFE65100.toInt())
+            .apply {
+                // fullScreenIntent causes system_server to invoke FLAG_TURN_SCREEN_ON
+                // via WindowManager, briefly lighting the lock screen — same as WeChat.
+                // On API 34+ this requires USE_FULL_SCREEN_INTENT to be granted.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    if (canFsi) {
+                        setFullScreenIntent(contentIntent, true)
+                        Log.d(TAG, "fireAutoStartAlert: setFullScreenIntent applied (API 34+)")
+                    } else {
+                        Log.w(TAG, "fireAutoStartAlert: USE_FULL_SCREEN_INTENT not granted, no screen wake")
+                    }
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    setFullScreenIntent(contentIntent, true)
+                    Log.d(TAG, "fireAutoStartAlert: setFullScreenIntent applied (API < 34)")
+                }
+            }
             .build()
 
-        val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID_ALERT, notification)
 
-        Log.d(TAG, "已发送自动计时弹头提醒通知")
+        Log.d(TAG, "Alert notification sent for auto-start")
+    }
+
+    /**
+     * Launch LockScreenTimerActivity to wake the screen and display timer info
+     * on a pure-black full-screen overlay — identical to the AOD/WeChat effect.
+     *
+     * Uses AlarmManager.setAlarmClock() to bypass Background Activity Launch (BAL)
+     * restrictions enforced by OEM ROMs (OPPO/ColorOS/MIUI on Android 12+).
+     * setAlarmClock() grants the app a BAL token that lets it start an Activity
+     * from the background — the same privilege used by system alarm clock apps.
+     *
+     * Only fires when the screen is off (interactive == false).
+     */
+    private fun startLockScreenActivity(
+        songCount: Int,
+        cost: Float,
+        elapsedSeconds: Int,
+        isAutoStart: Boolean
+    ) {
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        val screenOn = pm.isInteractive
+        Log.d(TAG, "startLockScreenActivity: screenOn=$screenOn song=$songCount cost=$cost elapsed=${elapsedSeconds}s autoStart=$isAutoStart")
+        if (screenOn) {
+            Log.d(TAG, "startLockScreenActivity: screen is interactive, skip overlay")
+            return
+        }
+
+        val activityIntent = LockScreenTimerActivity.createIntent(
+            context = applicationContext,
+            songCount = songCount,
+            cost = cost,
+            elapsedSeconds = elapsedSeconds,
+            isAutoStart = isAutoStart
+        )
+        val activityPi = PendingIntent.getActivity(
+            applicationContext,
+            30 + songCount,
+            activityIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        // setAlarmClock fires the PendingIntent nearly immediately (triggerTime = now)
+        // and grants a BAL (Background Activity Launch) exemption recognised by all
+        // Android OEM ROMs including OPPO ColorOS and Xiaomi MIUI.
+        val am = getSystemService(AlarmManager::class.java)
+        val canExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.canScheduleExactAlarms() else true
+        Log.d(TAG, "startLockScreenActivity: canScheduleExactAlarms=$canExact")
+        val triggerAtMillis = System.currentTimeMillis() + 100L
+        val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerAtMillis, activityPi)
+        if (canExact) {
+            am.setAlarmClock(alarmClockInfo, activityPi)
+            Log.d(TAG, "startLockScreenActivity: setAlarmClock scheduled for +100ms")
+        } else {
+            // Fallback: direct startActivity (may be blocked by OEM BAL restrictions)
+            Log.w(TAG, "startLockScreenActivity: no exact alarm permission, falling back to startActivity")
+            startActivity(activityIntent)
+        }
+    }
+
+    /**
+     * Post a transient billing-peek notification when a new song is charged.
+     *
+     * Uses CHANNEL_ID_BILLING (IMPORTANCE_HIGH, no sound, no vibration) so that
+     * system_server invokes FLAG_TURN_SCREEN_ON via WindowManager — the same
+     * mechanism used by WeChat lock-screen messages. Physical vibration is already
+     * handled separately by VibrationHelper.
+     *
+     * The notification auto-cancels after 5 seconds via setTimeoutAfter() so it
+     * does not clutter the notification shade.
+     */
+    private fun postBillingPeekNotification(songCount: Int, cost: Float, elapsedSeconds: Int) {
+        val nm = getSystemService(NotificationManager::class.java)
+
+        // Diagnostic: log permission and channel state before posting
+        val areNotificationsEnabled = nm.areNotificationsEnabled()
+        val billingChannel = nm.getNotificationChannel(CHANNEL_ID_BILLING)
+        val channelImportance = billingChannel?.importance ?: -1
+        val channelBlocked = channelImportance == NotificationManager.IMPORTANCE_NONE
+        val canFsi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) nm.canUseFullScreenIntent() else true
+        Log.d(TAG, "postBillingPeek: notifEnabled=$areNotificationsEnabled channelImportance=$channelImportance channelBlocked=$channelBlocked canUseFullScreenIntent=$canFsi song=$songCount cost=$cost elapsed=${elapsedSeconds}s")
+
+        if (!areNotificationsEnabled) {
+            Log.w(TAG, "postBillingPeek: notifications disabled globally, skip")
+            return
+        }
+        if (channelBlocked) {
+            Log.w(TAG, "postBillingPeek: CHANNEL_BILLING is blocked by user, skip")
+            return
+        }
+
+        val contentIntent = PendingIntent.getActivity(
+            this, 20,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val costStr = CostCalculator.formatCost(cost)
+        val totalMinutes = elapsedSeconds / 60
+        val timeDisplay = if (totalMinutes > 0) "${totalMinutes}分钟" else "${elapsedSeconds}秒"
+        val title = "第${songCount}曲  ·  $costStr"
+        val contentText = "已计时 $timeDisplay  ·  长按音量键停止"
+
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID_BILLING)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setLargeIcon(android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher))
+            .setContentTitle(title)
+            .setSubText("舞蹈计时器")
+            .setContentText(contentText)
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .setTimeoutAfter(5_000)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setCategory(Notification.CATEGORY_STOPWATCH)
+            .setColor(0xFF6750A4.toInt())
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    if (canFsi) {
+                        setFullScreenIntent(contentIntent, false)
+                        Log.d(TAG, "postBillingPeek: setFullScreenIntent applied (API 34+)")
+                    } else {
+                        Log.w(TAG, "postBillingPeek: USE_FULL_SCREEN_INTENT not granted, no screen wake")
+                    }
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    setFullScreenIntent(contentIntent, false)
+                    Log.d(TAG, "postBillingPeek: setFullScreenIntent applied (API < 34)")
+                }
+            }
+            .build()
+
+        nm.notify(NOTIFICATION_ID_BILLING_PEEK, notification)
+        Log.d(TAG, "postBillingPeek: notified ID=$NOTIFICATION_ID_BILLING_PEEK title=$title")
     }
 }

@@ -94,10 +94,15 @@ fun SettingsScreen(
     // 每次回到前台重新检测
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var isBatteryOptimized by remember { mutableStateOf(false) }
+    var canUseFullScreenIntent by remember { mutableStateOf(true) }
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 isBatteryOptimized = !isIgnoringBatteryOptimizations(context)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    val nm = context.getSystemService(android.app.NotificationManager::class.java)
+                    canUseFullScreenIntent = nm.canUseFullScreenIntent()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -448,6 +453,57 @@ fun SettingsScreen(
                             tint = if (isBatteryOptimized) MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                         )
+                    }
+                    // 锁屏亮屏权限（Android 14+ USE_FULL_SCREEN_INTENT）
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val intent = Intent(
+                                        Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                                        Uri.fromParts("package", context.packageName, null)
+                                    )
+                                    context.startActivity(intent)
+                                }
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text(
+                                    "锁屏亮屏提醒权限",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                if (!canUseFullScreenIntent) {
+                                    Text(
+                                        text = "⚠ 未授权，新曲计费时无法唤亮锁屏",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        lineHeight = 16.sp
+                                    )
+                                } else {
+                                    Text(
+                                        text = "✅ 已授权，新曲/自动计时时将唤亮锁屏",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        lineHeight = 16.sp
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = if (!canUseFullScreenIntent) MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                        }
                     }
                 }
             }
