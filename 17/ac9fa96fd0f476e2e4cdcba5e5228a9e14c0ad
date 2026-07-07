@@ -1,0 +1,192 @@
+docs/agents/build-and-release.md
+  s_0a97c422754148::t_52c0e07b8d0597 1-61
+app/src/main/java/com/example/dancetimer/ui/screen/StatsScreen.kt
+  s_bbc4b2786dfb45::t_b84bde1e7a2acc 1-29,31,33-44,46-92,94,96-152,154-156,158-313,315-316,318,322-323,327-331,334,353,363-364,384-439
+  s_4fa3d0a0a32d89::t_d4e9bd43083c94 30,32
+  h_fbb9b8e239a0dd 45,93,95
+  s_4fa3d0a0a32d89::t_bfadaf3854f832 153,157
+  s_4fa3d0a0a32d89::t_e12261d7f28861 314,317,319-321,324-326,332-333,335-352,354-362,365-383
+docs/agents/ui-patterns.md
+  s_4fa3d0a0a32d89::t_f9c16a0a4da324 43-62
+  s_0a97c422754148::t_79efa791db4982 1-42,63-81
+app/src/main/java/com/example/dancetimer/util/DateRangeCalculator.kt
+  s_0a97c422754148::t_0537505f56c330 1-53,62-81
+  s_4fa3d0a0a32d89::t_61a45a841f42cf 54-61
+README.md
+  s_0a97c422754148::t_772526614bc6e7 41-48,53-58,60-62,64-77,80-85
+  h_fbb9b8e239a0dd 50-52
+  s_e78175aaf43068::t_e6ca1c2aca76c3 87-121
+docs/agents/date-time-conventions.md
+  s_0a97c422754148::t_950bde849af794 1-141
+app/src/main/java/com/example/dancetimer/ui/navigation/AppNavigation.kt
+  s_bbc4b2786dfb45::t_2f992a92dd0e12 52-55
+app/.idea/misc.xml
+  ai_agent 1-4
+app/src/main/java/com/example/dancetimer/DanceTimerApp.kt
+  s_95fba28519c814::t_58d4398a4a46e0 52-62
+app/src/main/java/com/example/dancetimer/LockScreenTimerActivity.kt
+  s_4d85a30a9f7c54::t_f95053eecb1f14 73
+  s_4d85a30a9f7c54::t_3f4dafea6e1fea 227
+  s_4d85a30a9f7c54::t_fae914cbc6fe80 121
+AGENTS.md
+  s_0a97c422754148::t_8cae9693bb7871 1-55
+app/src/main/res/xml/backup_rules.xml
+  s_b9ec2d6c99fac4::t_b28802ad6b34d5 1-4,7-13
+app/src/main/java/com/example/dancetimer/service/TimerForegroundService.kt
+  s_4d85a30a9f7c54::t_bb71094e47e107 653
+  s_4d85a30a9f7c54::t_a66812c2d6d7ad 477,480,496-497,500,505,510-512,516-517,520,523
+  s_4d85a30a9f7c54::t_f2220c9ac9142c 293
+  s_4d85a30a9f7c54::t_729f321ae59c7e 532
+  s_4d85a30a9f7c54::t_b74d4a5c69b3b1 731
+  s_4d85a30a9f7c54::t_aed9df4954fd61 633
+  s_4d85a30a9f7c54::t_8e6742c99edf03 251
+  s_de40096e800c12::t_43eeaf3bfd041f 257-264
+  s_4d85a30a9f7c54::t_b45b36a05a61fc 977,1033,1042
+  s_4d85a30a9f7c54::t_a9b8649a6716b0 1290,1294,1304
+  s_de40096e800c12::t_c41eafbec5e4d4 270-287
+  h_fbb9b8e239a0dd 764-765
+app/build.gradle.kts
+  s_0a97c422754148::t_506a1dc60b884b 44
+  h_fbb9b8e239a0dd 16-17
+  s_0a97c422754148::t_29b43c2880dccf 63
+app/src/main/java/com/example/dancetimer/ui/screen/SettingsScreen.kt
+  s_4d85a30a9f7c54::t_faf78f511f2bec 314
+  s_4d85a30a9f7c54::t_6aaeef05a7ab60 168-178,180-197
+app/src/main/res/xml/data_extraction_rules.xml
+  s_b9ec2d6c99fac4::t_b28802ad6b34d5 1-4,8-11,14-17
+app/src/main/java/com/example/dancetimer/ui/viewmodel/HomeViewModel.kt
+  h_fbb9b8e239a0dd 127-128,130-132,154-173
+app/src/main/java/com/example/dancetimer/ui/viewmodel/SettingsViewModel.kt
+  s_4d85a30a9f7c54::t_6020c47bb3f5b1 237
+app/src/main/java/com/example/dancetimer/ui/viewmodel/HistoryViewModel.kt
+  s_4fa3d0a0a32d89::t_61a45a841f42cf 48-49,51
+  s_0a97c422754148::t_3ad2610673192b 8,10,21-36,38,40-45,50,52-53,59-60,63-64,67,69
+  s_0a97c422754148::t_eeac19419c7930 9,14
+  h_fbb9b8e239a0dd 56-57
+app/src/main/java/com/example/dancetimer/data/db/DanceRecordDao.kt
+  s_0a97c422754148::t_a75af0a1f15f31 28
+  h_fbb9b8e239a0dd 32-35
+docs/agents/architecture.md
+  s_0a97c422754148::t_2fd6137945071a 1-73,75-86
+  s_bbc4b2786dfb45::t_b61375eb7fe129 74
+app/src/main/java/com/example/dancetimer/util/VolumeKeyDetector.kt
+  s_4d85a30a9f7c54::t_f9cbbf7722cb8d 9-10,22,25,36,49,74,107
+app/src/main/java/com/example/dancetimer/ui/screen/content/TimerRunningContent.kt
+  s_4d85a30a9f7c54::t_45d04f8d093c73 123
+  s_4d85a30a9f7c54::t_67b433f6348204 172
+gradle/libs.versions.toml
+  s_0a97c422754148::t_8db6c2d66a8b34 5,23
+app/src/main/java/com/example/dancetimer/ui/screen/content/TimerIdleContent.kt
+  h_fbb9b8e239a0dd 8,11,14-15,164-166,168-186,188-238,240,243
+  s_b9ec2d6c99fac4::t_ee19885a52fa2d 36,43,46-47
+  s_4fa3d0a0a32d89::t_40c814435d3b59 44-45,250-251
+app/src/main/java/com/example/dancetimer/ui/screen/components/LockEventListSection.kt
+  h_fbb9b8e239a0dd 14,40-41,128-130,132-140,142-153,155-160,184,194,201-202,220-223,227,245-258,270-278,289-297,308-333
+app/.idea/vcs.xml
+  ai_agent 1-6
+app/src/main/java/com/example/dancetimer/ui/screen/HistoryScreen.kt
+  h_fbb9b8e239a0dd 3,11,38,64-72,92,107-108,121,146-147,228,247,287-297,301
+  s_4d85a30a9f7c54::t_49e5eef5ad9051 40
+  s_4d85a30a9f7c54::t_96dde6c9222161 4
+  s_4fa3d0a0a32d89::t_61a45a841f42cf 37,123,213,227
+  s_4d85a30a9f7c54::t_76884f09ca00e1 251-252,259-261,269
+  s_4d85a30a9f7c54::t_fa8bf9d738c3dc 180-209
+app/.idea/.gitignore
+  ai_agent 1-10
+app/src/main/java/com/example/dancetimer/data/preferences/UserPreferencesManager.kt
+  h_fbb9b8e239a0dd 38-39,174-184
+app/.idea/gradle.xml
+  ai_agent 1-11
+app/.idea/inspectionProfiles/Project_Default.xml
+  ai_agent 1-5
+docs/agents/data-layer.md
+  s_0a97c422754148::t_40262980ffe5a8 1-57
+app/src/main/java/com/example/dancetimer/data/model/StatsData.kt
+  h_fbb9b8e239a0dd 1-17,26-47
+  s_4fa3d0a0a32d89::t_2d9ff16e821fe5 18-25
+app/src/main/java/com/example/dancetimer/ui/screen/HomeScreen.kt
+  s_4fa3d0a0a32d89::t_459ce69adb60c3 52,177-178
+  h_fbb9b8e239a0dd 51,53-54,168,181-183
+app/src/main/java/com/example/dancetimer/ui/navigation/Screen.kt
+  s_bbc4b2786dfb45::t_2f992a92dd0e12 18
+app/src/main/java/com/example/dancetimer/ui/viewmodel/StatsViewModel.kt
+  s_bbc4b2786dfb45::t_430a486c1f1607 1-90,92,100,103,108,111-127
+  s_4fa3d0a0a32d89::t_69205f282f92a0 91,93-99,101-102,104-107,109-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.28-trip",
+  "base_commit_sha": "17ac9fa96fd0f476e2e4cdcba5e5228a9e14c0ad",
+  "prompts": {},
+  "humans": {
+    "h_fbb9b8e239a0dd": {
+      "author": "James Smith(杨鑫) <xin.y@trip.com>"
+    }
+  },
+  "sessions": {
+    "s_0a97c422754148": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "23b8f028-1b62-4a73-81f9-ab89b5028fe5",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "James Smith(杨鑫) <xin.y@trip.com>"
+    },
+    "s_4d85a30a9f7c54": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "b71c91a3-0cca-42b6-b59b-b04fd24200a5",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "James Smith(杨鑫) <xin.y@trip.com>"
+    },
+    "s_4fa3d0a0a32d89": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "cb9cf9cf-feb8-45f7-b79f-6db1ebff57fe",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "James Smith(杨鑫) <xin.y@trip.com>"
+    },
+    "s_95fba28519c814": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "d52df9da-aa8f-42bf-a4bb-bcd8d8719ce5",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "James Smith(杨鑫) <xin.y@trip.com>"
+    },
+    "s_b9ec2d6c99fac4": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "82bdd918-5942-4fdf-8377-a62e983367f7",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "James Smith(杨鑫) <xin.y@trip.com>"
+    },
+    "s_bbc4b2786dfb45": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "8acb4615-0a15-4b41-b1be-4e3b62730b44",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "James Smith(杨鑫) <xin.y@trip.com>"
+    },
+    "s_de40096e800c12": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "0c7b6445-e1f7-4a2c-8282-d80c6e7f7d9d",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "James Smith(杨鑫) <xin.y@trip.com>"
+    },
+    "s_e78175aaf43068": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "3e49e7c2-6578-44e1-8b90-a161c2545e7b",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "James Smith(杨鑫) <xin.y@trip.com>"
+    }
+  }
+}
