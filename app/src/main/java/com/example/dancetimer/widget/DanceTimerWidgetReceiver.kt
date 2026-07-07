@@ -61,7 +61,6 @@ class DanceTimerWidgetReceiver : AppWidgetProvider() {
                     val cost = CostCalculator.formatCost(state.cost)
                     val totalMin = state.elapsedSeconds / 60
                     val prefix = when {
-                        state.isAutoStarted -> "🤖"
                         state.isPaused -> "⏸"
                         else -> "⏱"
                     }

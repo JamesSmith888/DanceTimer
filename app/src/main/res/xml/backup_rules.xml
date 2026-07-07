@@ -1,13 +1,14 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older that API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Auto Backup 规则（适用于 API 30 及以下设备）
+   包含 Room 数据库和 DataStore 偏好，确保重装 App 后数据不丢失。
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <!-- Room 数据库主文件 -->
+    <include domain="database" path="dance_timer.db"/>
+    <!-- Room WAL 日志（如存在） -->
+    <include domain="database" path="dance_timer.db-shm"/>
+    <include domain="database" path="dance_timer.db-wal"/>
+    <!-- DataStore 偏好文件 -->
+    <include domain="file" path="../datastore/dance_timer_prefs.preferences_pb"/>
 </full-backup-content>

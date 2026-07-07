@@ -25,7 +25,6 @@ import com.example.dancetimer.ui.theme.DanceTimerTheme
 import com.example.dancetimer.ui.viewmodel.SettingsViewModel
 import com.example.dancetimer.util.VolumeKeyDetector
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.first
 
 class MainActivity : ComponentActivity() {
 
@@ -58,7 +57,6 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         requestNotificationPermission()
-        loadTriggerMode()
 
         // 启动待命服务（MediaSession 锁屏音量键拦截）
         TimerForegroundService.enterStandby(this)
@@ -93,8 +91,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 每次恢复时重新加载触发方式偏好
-        loadTriggerMode()
     }
 
     /**
@@ -125,14 +121,6 @@ class MainActivity : ComponentActivity() {
             ) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
-        }
-    }
-
-    private fun loadTriggerMode() {
-        activityScope.launch {
-            val prefs = UserPreferencesManager(this@MainActivity)
-            val mode = prefs.triggerMode.first()
-            volumeKeyDetector.triggerMode = mode
         }
     }
 

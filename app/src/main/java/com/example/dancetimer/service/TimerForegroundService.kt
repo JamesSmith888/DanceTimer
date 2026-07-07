@@ -21,10 +21,6 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.os.VibrationEffect
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.dancetimer.LockScreenTimerActivity
@@ -76,9 +72,6 @@ class TimerForegroundService : Service() {
         const val ACTION_RESUME = "com.example.dancetimer.ACTION_RESUME"
         const val ACTION_STANDBY = "com.example.dancetimer.ACTION_STANDBY"
         const val ACTION_DISMISS = "com.example.dancetimer.ACTION_DISMISS"
-        const val ACTION_AUTO_START = "com.example.dancetimer.ACTION_AUTO_START"
-        const val ACTION_CANCEL_AUTO = "com.example.dancetimer.ACTION_CANCEL_AUTO"
-        const val ACTION_CONFIRM_AUTO = "com.example.dancetimer.ACTION_CONFIRM_AUTO"
         private const val ACTION_TICK = "com.example.dancetimer.ACTION_TICK"
         const val ACTION_START_FROM_LOCK_EVENT = "com.example.dancetimer.ACTION_START_FROM_LOCK_EVENT"
         const val EXTRA_LOCK_EVENT_TIMESTAMP = "lock_event_timestamp"
@@ -87,24 +80,6 @@ class TimerForegroundService : Service() {
         private const val ALARM_TICK_INTERVAL_MS = 30_000L
         /** 锁屏事件通知更新间隔（毫秒）— 待机通知每 60 秒刷新一次最近锁屏信息 */
         private const val LOCK_EVENT_NOTIFICATION_INTERVAL_MS = 60_000L
-
-        /** 步行检测阈值（步/分钟）— 超过此值判定为走路而非跳舞 */
-        private const val STEP_WALKING_THRESHOLD_PER_MINUTE = 80
-
-        /** 步频计算滚动窗口（秒）— 固定10秒，不受延迟配置长短影响 */
-        private const val STEP_DETECTION_WINDOW_SECONDS = 10
-
-        /** 步频评估所需最短采样时间（ms）— 不足此时长数据过少，不做判断 */
-        private const val STEP_DETECTION_MIN_SAMPLE_MS = 5_000L
-
-        /** 步行监控阶段：每次检查间隔（ms） */
-        private const val WALKING_CHECK_INTERVAL_MS = 3_000L
-
-        /** 步行监控阶段：连续多少次非步行才视为已停止 (~6秒) */
-        private const val WALKING_STOPPED_CONFIRM_COUNT = 2
-
-        /** 步行监控最大等待时长（ms）— 超时后放弃，避免长期驻留传感器 */
-        private const val WALKING_MONITOR_TIMEOUT_MS = 5 * 60 * 1000L
 
         private val _timerState = MutableStateFlow<TimerState>(TimerState.Idle)
         val timerState: StateFlow<TimerState> = _timerState.asStateFlow()
@@ -173,22 +148,6 @@ class TimerForegroundService : Service() {
         fun dismiss(context: Context) {
             val intent = Intent(context, TimerForegroundService::class.java).apply {
                 action = ACTION_DISMISS
-            }
-            context.startService(intent)
-        }
-
-        /** 取消自动计时 */
-        fun cancelAutoStart(context: Context) {
-            val intent = Intent(context, TimerForegroundService::class.java).apply {
-                action = ACTION_CANCEL_AUTO
-            }
-            context.startService(intent)
-        }
-
-        /** 确认自动计时 */
-        fun confirmAutoStart(context: Context) {
-            val intent = Intent(context, TimerForegroundService::class.java).apply {
-                action = ACTION_CONFIRM_AUTO
             }
             context.startService(intent)
         }
@@ -288,64 +247,55 @@ class TimerForegroundService : Service() {
     private var pausedElapsedSeconds: Int = 0
     // 用于通知 Chronometer 的基准时间（恢复后调整）
     private var chronometerBase: Long = 0L
-    // 自动计时标记
-    private var isAutoStarted: Boolean = false
-    // 用户解锁后是否已返回（用于通知提示确认）
-    private var hasUserReturned: Boolean = false
-    // 息屏自动计时 — 延迟等待阶段
-    private var isPendingAutoStart = false
-    private var pendingAutoStartRunnable: Runnable? = null
 
-    // 广播接收器
-    private var screenOffReceiver: BroadcastReceiver? = null
-    private var screenOnReceiver: BroadcastReceiver? = null
-    private var userPresentReceiver: BroadcastReceiver? = null
-
-    // 计步器防误触 — 滚动时间窗口算法
-    private var stepSensorManager: SensorManager? = null
-    private var stepListener: SensorEventListener? = null
-    /** 步伐时间戳列表，用于滚动窗口步频计算 */
-    private val stepTimestamps = mutableListOf<Long>()
-    /** 计步器启动时刻（用于判断采样时长是否已满足最小值） */
-    private var stepDetectionStartTime: Long = 0L
-
-    // 步行监控 — 检测到步行后持续监控，停止步行后重新触发延迟等待
-    private var isWalkingMonitoring = false
-    private var walkingCheckRunnable: Runnable? = null
-    private var walkingMonitorStartTime = 0L
-    private var walkingStoppedCount = 0
-    /** 当前延迟等待周期的秒数，用于步行结束后重新进入延迟 */
-    private var pendingAutoStartDelaySeconds = 0
-    /** 当前生效的步行判定阈值（步/分钟），从用户配置加载 */
-    private var activeStepWalkingThreshold = STEP_WALKING_THRESHOLD_PER_MINUTE
-
-    // 触发来源 & 确认类型追踪（用于保存历史记录元数据）
+    // 触发来源追踪（用于保存历史记录元数据）
     private var startTriggerType: String = DanceRecord.TRIGGER_MANUAL
-    private var autoConfirmResult: String? = null
-    private var startScreenOffDelay: Int = 0
 
     // 锁屏事件通知更新定时任务
     private var lockEventNotificationRunnable: Runnable? = null
+
+    /**
+     * 息屏广播接收器 — 仅负责记录锁屏事件，与计时逻辑完全解耦。
+     * 历史教训：原实现将事件记录混入了"自动计时"逻辑（handleScreenOff），
+     * 当自动计时功能被删除时，记录功能也被误删。
+     * 正确做法：保持单一职责，此接收器只做记录。
+     */
+    private var screenOffReceiver: BroadcastReceiver? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        // 注册息屏接收器（仅记录锁屏事件，不涉及任何计时逻辑）
+        screenOffReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != Intent.ACTION_SCREEN_OFF) return
+                recordScreenLockEvent()
+                // 待命模式下立即重启通知更新器，使通知在 5 秒内反映最新锁屏时间
+                if (isStandbyActive && _timerState.value !is TimerState.Running) {
+                    startLockEventNotificationUpdater()
+                }
+            }
+        }
+        val screenOffFilter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenOffReceiver, screenOffFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(screenOffReceiver, screenOffFilter)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STANDBY -> handleStandby()
-            ACTION_START -> handleStart(isAuto = false)
-            ACTION_AUTO_START -> handleStart(isAuto = true)
+            ACTION_START -> handleStart()
             ACTION_START_FROM_LOCK_EVENT -> handleStartFromLockEvent(intent)
             ACTION_STOP -> handleStop()
             ACTION_PAUSE -> handlePause()
             ACTION_RESUME -> handleResume()
             ACTION_DISMISS -> handleDismiss()
-            ACTION_CANCEL_AUTO -> handleCancelAuto()
-            ACTION_CONFIRM_AUTO -> handleConfirmAuto()
             ACTION_TICK -> handleAlarmTick()
         }
         return START_STICKY
@@ -361,28 +311,18 @@ class TimerForegroundService : Service() {
         SilentAudioPlayer.start()
         setupMediaSession()
         resetMediaSessionForStandby()
-        registerScreenOffReceiver()
         startLockEventNotificationUpdater()
     }
 
     private fun handleDismiss() {
         Log.d(TAG, "退出待命模式")
-        cancelWalkingMonitoring()
-        cancelPendingAutoStart()
-        unregisterScreenOffReceiver()
-        unregisterUserPresentReceiver()
-        stopStepDetection()
         stopLockEventNotificationUpdater()
         releaseMediaSession()
         SilentAudioPlayer.stop()
         stopTicking()
         releaseWakeLock()
         isStandbyActive = false
-        isAutoStarted = false
-        hasUserReturned = false
         startTriggerType = DanceRecord.TRIGGER_MANUAL
-        autoConfirmResult = null
-        startScreenOffDelay = 0
         _timerState.value = TimerState.Idle
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -534,28 +474,16 @@ class TimerForegroundService : Service() {
 
     // ===== 启动计时 =====
 
-    private fun handleStart(isAuto: Boolean = false) {
+    private fun handleStart() {
         if (_timerState.value is TimerState.Running) return
 
-        // 如果有延迟等待中的自动计时，取消它（用户已手动启动或延迟到期）
-        if (isPendingAutoStart) {
-            cancelPendingAutoStart()
-        }
-
-        isAutoStarted = isAuto
-        hasUserReturned = false
-        startTriggerType = if (isAuto) DanceRecord.TRIGGER_AUTO else DanceRecord.TRIGGER_MANUAL
-        autoConfirmResult = null
-        if (isAuto) {
-            Log.d(TAG, "息屏自动计时启动")
-        }
+        startTriggerType = DanceRecord.TRIGGER_MANUAL
 
         serviceScope.launch {
             // 从数据库加载默认计价规则
             val db = AppDatabase.getInstance(applicationContext)
             val ruleWithTiers = db.pricingRuleDao().getDefaultRuleWithTiers()
             if (ruleWithTiers == null) {
-                // 没有配置任何规则，仍然允许计时（费用显示0）
                 tiers = emptyList()
                 ruleName = "未配置规则"
                 ruleId = 0L
@@ -565,61 +493,34 @@ class TimerForegroundService : Service() {
                 ruleId = ruleWithTiers.rule.id
             }
 
-            // 自动计时：读取并快照延迟配置（在记录中保存触发时的配置值）
-            if (isAuto) {
-                startScreenOffDelay = UserPreferencesManager(applicationContext).autoStartDelaySeconds.first()
-            } else {
-                startScreenOffDelay = 0
-            }
-
-            // 自动计时：将起始时间回溯延迟秒数，使 elapsed 从延迟值开始（息屏等待期间即为跳舞时间）
-            val autoOffsetMs = if (isAuto) startScreenOffDelay * 1000L else 0L
-            startElapsedRealtime = SystemClock.elapsedRealtime() - autoOffsetMs
-            startWallClock = System.currentTimeMillis() - autoOffsetMs
+            startElapsedRealtime = SystemClock.elapsedRealtime()
+            startWallClock = System.currentTimeMillis()
             chronometerBase = startWallClock
 
-            val initialElapsed = if (isAuto) startScreenOffDelay else 0
-            lastReachedSongIndex = CostCalculator.getCurrentSongIndex(initialElapsed, tiers)
+            lastReachedSongIndex = CostCalculator.getCurrentSongIndex(0, tiers)
             lastNotifiedCost = 0f
             lastNotifiedSongCount = -1
             lastNotifiedInGrace = false
             lastNotifiedMinute = -1
-            lastBilledSongCountForLockScreen = CostCalculator.getSongCount(initialElapsed, tiers)
+            lastBilledSongCountForLockScreen = CostCalculator.getSongCount(0, tiers)
             pausedElapsedSeconds = 0
 
-            // 获取 WakeLock
             acquireWakeLock()
 
-            val initCost = CostCalculator.calculate(initialElapsed, tiers)
-            val initSongCount = CostCalculator.getSongCount(initialElapsed, tiers)
-            val initSongIndex = CostCalculator.getCurrentSongIndex(initialElapsed, tiers)
+            val initCost = CostCalculator.calculate(0, tiers)
+            val initSongCount = CostCalculator.getSongCount(0, tiers)
+            val initSongIndex = CostCalculator.getCurrentSongIndex(0, tiers)
 
-            // 切换前台通知：先移除待命通知，再启动计时通知
-            // 使用不同 NOTIFICATION_ID 避免 OEM（OPPO/ColorOS/MIUI）渠道切换失败
             val nm = getSystemService(NotificationManager::class.java)
             nm.cancel(NOTIFICATION_ID_STANDBY)
-            Log.d(TAG, "待命通知已取消(ID=$NOTIFICATION_ID_STANDBY), 准备发送计时通知(ID=$NOTIFICATION_ID_RUNNING)")
-            startForeground(NOTIFICATION_ID_RUNNING, buildRunningNotification(initialElapsed, initCost, initSongCount, isAutoStarted = isAuto))
-            Log.d(TAG, "计时通知已发送, channel=$CHANNEL_ID_RUNNING, initialElapsed=${initialElapsed}s")
+            startForeground(NOTIFICATION_ID_RUNNING, buildRunningNotification(0, initCost, initSongCount))
+            Log.d(TAG, "计时通知已发送, channel=$CHANNEL_ID_RUNNING")
 
-            // 更新 MediaSession 元数据（锁屏/状态胶囊显示计时信息）
             updateMediaSessionForRunning(initCost)
+            VibrationHelper.vibrateFeedback(applicationContext)
 
-            // 震动反馈：开始
-            if (isAuto) {
-                // 自动计时 → 强化震动（两段式）确保用户感知到
-                vibrateAutoStartAlert(applicationContext)
-                // 发送高优先级 heads-up 弹头通知
-                fireAutoStartAlertNotification()
-                // 唤醒屏幕并显示锁屏计时悬浮页
-                startLockScreenActivity(initSongCount, initCost, initialElapsed, isAutoStart = true)
-            } else {
-                VibrationHelper.vibrateFeedback(applicationContext)
-            }
-
-            // 更新状态
             _timerState.value = TimerState.Running(
-                elapsedSeconds = initialElapsed,
+                elapsedSeconds = 0,
                 currentSongIndex = initSongIndex,
                 cost = initCost,
                 songCount = initSongCount,
@@ -628,17 +529,10 @@ class TimerForegroundService : Service() {
                 ruleName = ruleName,
                 ruleId = ruleId,
                 isPaused = false,
-                isInGracePeriod = false,
-                isAutoStarted = isAuto
+                isInGracePeriod = false
             )
 
-            // 启动计时机制 — Handler 主循环 + AlarmManager 备份唤醒
             startTicking()
-
-            // 自动计时：注册用户解锁感知，用于亮屏时提醒确认
-            if (isAuto) {
-                registerUserPresentReceiver()
-            }
         }
     }
 
@@ -736,26 +630,13 @@ class TimerForegroundService : Service() {
             }
             postBillingPeekNotification(songCount, cost, elapsed)
             // Wake screen and show full-screen lock screen overlay
-            startLockScreenActivity(songCount, cost, elapsed, isAutoStart = false)
+            startLockScreenActivity(songCount, cost, elapsed)
             lastBilledSongCountForLockScreen = songCount
         }
 
         // Keep lastReachedSongIndex in sync
         if (songIndex > lastReachedSongIndex) {
             lastReachedSongIndex = songIndex
-        }
-
-        // 自动计时：首次计费时自动确认（不同规则歌曲时长不同，比固定时间更自适应）
-        if (isAutoStarted && cost > 0f) {
-            Log.d(TAG, "自动计时到达首次计费，自动确认")
-            isAutoStarted = false
-            hasUserReturned = false
-            autoConfirmResult = DanceRecord.RESULT_CONFIRMED_AUTO
-            stopStepDetection()
-            unregisterUserPresentReceiver()
-
-            // 取消弹头提醒通知
-            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID_ALERT)
         }
 
         // 更新状态
@@ -769,8 +650,7 @@ class TimerForegroundService : Service() {
             ruleName = ruleName,
             ruleId = ruleId,
             isPaused = false,
-            isInGracePeriod = inGrace,
-            isAutoStarted = isAutoStarted
+            isInGracePeriod = inGrace
         )
 
         // 更新通知
@@ -815,10 +695,6 @@ class TimerForegroundService : Service() {
         }
 
         stopTicking()
-        isAutoStarted = false
-        hasUserReturned = false
-        stopStepDetection()
-        unregisterUserPresentReceiver()
 
         val endWallClock = System.currentTimeMillis()
         val elapsed = ((SystemClock.elapsedRealtime() - startElapsedRealtime) / 1000).toInt()
@@ -852,9 +728,7 @@ class TimerForegroundService : Service() {
                 cost = cost,
                 pricingRuleName = ruleName,
                 pricingRuleId = ruleId,
-                triggerType = startTriggerType,
-                autoStartResult = autoConfirmResult,
-                screenOffDelaySeconds = startScreenOffDelay
+                triggerType = startTriggerType
             )
             AppDatabase.getInstance(applicationContext).danceRecordDao().insert(record)
         }
@@ -886,96 +760,17 @@ class TimerForegroundService : Service() {
         }
     }
 
-    // ===== 取消自动计时 =====
-
-    private fun handleCancelAuto() {
-        // 取消延迟等待阶段
-        if (isPendingAutoStart) {
-            cancelPendingAutoStart()
-            return
-        }
-
-        val current = _timerState.value
-        if (current !is TimerState.Running || !current.isAutoStarted) return
-
-        Log.d(TAG, "取消自动计时（误触发）")
-        stopTicking()
-        isAutoStarted = false
-        hasUserReturned = false
-        stopStepDetection()
-        unregisterUserPresentReceiver()
-
-        // 取消弹头提醒通知
-        getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID_ALERT)
-
-        // 保存误计时记录供用户查看（cost=0，标记为已取消）
-        if (startWallClock > 0L) {
-            val endWallClock = System.currentTimeMillis()
-            val elapsed = current.elapsedSeconds
-            serviceScope.launch {
-                val record = DanceRecord(
-                    startTime = startWallClock,
-                    endTime = endWallClock,
-                    durationSeconds = elapsed,
-                    cost = 0f,
-                    pricingRuleName = ruleName,
-                    pricingRuleId = ruleId,
-                    triggerType = DanceRecord.TRIGGER_AUTO,
-                    autoStartResult = DanceRecord.RESULT_CANCELLED,
-                    cancelledDurationSeconds = elapsed,
-                    screenOffDelaySeconds = startScreenOffDelay
-                )
-                AppDatabase.getInstance(applicationContext).danceRecordDao().insert(record)
-            }
-        }
-
-        // 震动反馈：取消
-        VibrationHelper.vibrateFeedback(applicationContext)
-
-        // 不保存记录，直接回到 Idle
-        _timerState.value = TimerState.Idle
-
-        // 释放 WakeLock
-        releaseWakeLock()
-        lastNotifiedCost = -1f
-        lastNotifiedSongCount = -1
-        lastNotifiedInGrace = false
-        lastNotifiedMinute = -1
-
-        // 更新桌面 Widget
-        DanceTimerWidgetReceiver.requestUpdate(applicationContext)
-
-        // 回到待命通知
-        if (isStandbyActive) {
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.cancel(NOTIFICATION_ID_RUNNING)
-            startForeground(NOTIFICATION_ID_STANDBY, buildStandbyNotification())
-            resetMediaSessionForStandby()
-            startLockEventNotificationUpdater()
-        } else {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-        }
-    }
-
     override fun onDestroy() {
+        screenOffReceiver?.let { unregisterReceiver(it) }
+        screenOffReceiver = null
         stopTicking()
-        cancelWalkingMonitoring()
-        cancelPendingAutoStart()
-        unregisterScreenOffReceiver()
-        unregisterUserPresentReceiver()
-        stopStepDetection()
         stopLockEventNotificationUpdater()
         releaseMediaSession()
         SilentAudioPlayer.stop()
         serviceScope.cancel()
         releaseWakeLock()
         isStandbyActive = false
-        isAutoStarted = false
-        hasUserReturned = false
         startTriggerType = DanceRecord.TRIGGER_MANUAL
-        autoConfirmResult = null
-        startScreenOffDelay = 0
         super.onDestroy()
     }
 
@@ -1179,9 +974,7 @@ class TimerForegroundService : Service() {
         songCount: Int = 0,
         isInGrace: Boolean = false,
         graceRemaining: Int = 0,
-        isPaused: Boolean = false,
-        isAutoStarted: Boolean = this.isAutoStarted,
-        hasUserReturned: Boolean = this.hasUserReturned
+        isPaused: Boolean = false
     ): Notification {
         val contentIntent = PendingIntent.getActivity(
             this, 0,
@@ -1207,35 +1000,14 @@ class TimerForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val cancelAutoIntent = PendingIntent.getService(
-            this, 4,
-            Intent(this, TimerForegroundService::class.java).apply {
-                action = ACTION_CANCEL_AUTO
-            },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val confirmAutoIntent = PendingIntent.getService(
-            this, 5,
-            Intent(this, TimerForegroundService::class.java).apply {
-                action = ACTION_CONFIRM_AUTO
-            },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
         val costStr = CostCalculator.formatCost(cost)
         val songPart = if (songCount > 0) "已计${songCount}曲" else "未满1曲"
         val totalMinutes = elapsedSeconds / 60
-        // Show seconds for the first minute so the timer feels live from the start
         val timeDisplay = if (totalMinutes > 0) "${totalMinutes}分钟" else "${elapsedSeconds}秒"
-        // Title: concise state label only — metrics go in contentText for cleaner layout
         val title = when {
-            isAutoStarted && hasUserReturned -> "自动计时 — 请确认"
-            isAutoStarted -> "自动计时中"
             isPaused -> "已暂停"
             else -> "计时中"
         }
-        // ContentText: key metrics — rendered in the dedicated body area
         val contentText = when {
             isInGrace -> "缓冲 ${graceRemaining}s  ·  $timeDisplay  ·  $songPart  ·  $costStr"
             isPaused -> "$timeDisplay  ·  $songPart  ·  $costStr  ·  长按音量+ 继续"
@@ -1243,12 +1015,8 @@ class TimerForegroundService : Service() {
         }
 
         val largeIcon = android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher)
-        // Chronometer base: rendered by SystemUI, ticks even when process is frozen by OEM
         val chronometerBase = System.currentTimeMillis() - elapsedSeconds * 1000L
 
-        // Public version shown on lock screen when user hasn't unlocked —
-        // identical content since VISIBILITY_PUBLIC is set, but some OEM ROMs
-        // (MIUI/ColorOS) require an explicit publicVersion to show full detail.
         val publicVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID_RUNNING)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -1262,7 +1030,7 @@ class TimerForegroundService : Service() {
                 .build()
         } else null
 
-        Log.d(TAG, "buildRunningNotification: elapsed=${elapsedSeconds}s title=$title content=$contentText publicVersion=${publicVersion != null}")
+        Log.d(TAG, "buildRunningNotification: elapsed=${elapsedSeconds}s title=$title content=$contentText")
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID_RUNNING)
@@ -1271,63 +1039,7 @@ class TimerForegroundService : Service() {
             Notification.Builder(this)
         }
 
-        if (isAutoStarted && hasUserReturned) {
-            // User has unlocked — show confirm/cancel actions
-            val confirmAction = Notification.Action.Builder(
-                android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_play_notification),
-                "继续计时",
-                confirmAutoIntent
-            ).build()
-            val cancelAction = Notification.Action.Builder(
-                android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_stop_notification),
-                "取消",
-                cancelAutoIntent
-            ).build()
-            builder.setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setLargeIcon(largeIcon)
-                .setContentTitle(title)
-                .setContentText(contentText)
-                .setSubText("已自动计时 $timeDisplay — 确认或取消")
-                .setOngoing(true)
-                .setOnlyAlertOnce(false)
-                .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .setCategory(Notification.CATEGORY_STOPWATCH)
-                .setUsesChronometer(true)
-                .setWhen(chronometerBase)
-                .setShowWhen(true)
-                .setContentIntent(contentIntent)
-                .addAction(confirmAction)
-                .addAction(cancelAction)
-                .setColor(0xFFE65100.toInt())
-        } else if (isAutoStarted) {
-            // Screen locked — show cancel/stop actions
-            val cancelAction = Notification.Action.Builder(
-                android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_stop_notification),
-                "取消",
-                cancelAutoIntent
-            ).build()
-            val stopAction = Notification.Action.Builder(
-                android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_stop_notification),
-                "停止",
-                stopIntent
-            ).build()
-            builder.setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setLargeIcon(largeIcon)
-                .setContentTitle(title)
-                .setContentText(contentText)
-                .setSubText("息屏触发 · 误触请取消")
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .setCategory(Notification.CATEGORY_STOPWATCH)
-                .setUsesChronometer(true)
-                .setWhen(chronometerBase)
-                .setShowWhen(true)
-                .setContentIntent(contentIntent)
-                .addAction(cancelAction)
-                .addAction(stopAction)
-                .setColor(0xFFE65100.toInt())
-        } else if (isPaused) {
+        if (isPaused) {
             val resumeAction = Notification.Action.Builder(
                 android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_play_notification),
                 "继续",
@@ -1387,8 +1099,6 @@ class TimerForegroundService : Service() {
                 }
         }
 
-        // Explicit publicVersion ensures full notification content is shown on lock screen
-        // on OEM ROMs (MIUI/ColorOS) that may otherwise collapse or redact the notification.
         publicVersion?.let { builder.setPublicVersion(it) }
 
 
@@ -1414,255 +1124,6 @@ class TimerForegroundService : Service() {
         wakeLock = null
     }
 
-    // ===== 息屏自动计时 =====
-
-    private fun registerScreenOffReceiver() {
-        if (screenOffReceiver != null) return
-        screenOffReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                if (intent.action == Intent.ACTION_SCREEN_OFF) {
-                    handleScreenOff()
-                }
-            }
-        }
-        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(screenOffReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(screenOffReceiver, filter)
-        }
-        Log.d(TAG, "已注册息屏广播接收器")
-    }
-
-    private fun unregisterScreenOffReceiver() {
-        screenOffReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (_: Exception) { }
-        }
-        screenOffReceiver = null
-    }
-
-    private fun handleScreenOff() {
-        if (!isStandbyActive) return
-
-        // ── 锁屏事件记录（与自动计时解耦，独立开关控制） ──
-        recordScreenLockEvent()
-
-        val current = _timerState.value
-
-        // Case 1: 未确认的自动计时 + 用户再次锁屏
-        if (current is TimerState.Running && isAutoStarted) {
-            Log.d(TAG, "handleScreenOff Case 1: isAutoStarted=true, hasUserReturned=$hasUserReturned")
-            if (hasUserReturned) {
-                // 用户已解锁看到过提示但未操作 → 保持计时，下次解锁再次提醒
-                // 理由：用户已知晓计时存在，未取消 ≠ 误触，保留记录不重置
-                Log.d(TAG, "用户已看到提示但未确认，再次锁屏 → 继续计时，下次解锁重新提醒")
-                hasUserReturned = false // 重置，下次解锁时再次震动提醒
-                return
-            }
-
-            // 用户从未解锁看到过提示（屏幕未亮起或通知未展示）→ 重置重计
-            serviceScope.launch {
-                val prefs = UserPreferencesManager(applicationContext)
-                val autoStartEnabled = prefs.autoStartOnScreenOff.first()
-                if (!autoStartEnabled) return@launch
-
-                Log.d(TAG, "未确认自动计时期间再次锁屏（用户未看到提示）→ 重置重计")
-                stopTicking()
-                isAutoStarted = false
-                hasUserReturned = false
-                cancelWalkingMonitoring()
-                stopStepDetection()
-                unregisterUserPresentReceiver()
-                _timerState.value = TimerState.Idle
-                releaseWakeLock()
-
-                lastNotifiedCost = -1f
-                lastNotifiedSongCount = -1
-                lastNotifiedInGrace = false
-                lastNotifiedMinute = -1
-
-                DanceTimerWidgetReceiver.requestUpdate(applicationContext)
-
-                val nm = getSystemService(NotificationManager::class.java)
-                nm.cancel(NOTIFICATION_ID_RUNNING)
-                nm.cancel(NOTIFICATION_ID_ALERT)
-                startForeground(NOTIFICATION_ID_STANDBY, buildStandbyNotification())
-                resetMediaSessionForStandby()
-
-                // 重新进入延迟等待
-                val delaySeconds = prefs.autoStartDelaySeconds.first()
-                enterPendingAutoStart(delaySeconds)
-            }
-            return
-        }
-
-        // Case 2: 已确认的计时（手动或自动确认后）→ 忽略
-        if (current is TimerState.Running) return
-
-        // Case 3: 完成状态 → 忽略（用户在查看结果）
-        if (current is TimerState.Finished) return
-
-        // Case 4: 空闲 → 进入延迟等待
-        if (isPendingAutoStart) return // 已在等待中
-
-        serviceScope.launch {
-            val prefs = UserPreferencesManager(applicationContext)
-            val autoStartEnabled = prefs.autoStartOnScreenOff.first()
-            if (!autoStartEnabled) return@launch
-
-            val delaySeconds = prefs.autoStartDelaySeconds.first()
-            Log.d(TAG, "息屏检测: 进入延迟等待阶段 (${delaySeconds}秒)")
-            enterPendingAutoStart(delaySeconds)
-        }
-    }
-
-    // ===== 智能防误触 — 延迟等待 + 确认 + 计步器 =====
-    //
-    // 状态流: Idle → Pending(延迟等待) → Unconfirmed Running → Confirmed Running
-    //
-    // Pending: 锁屏后等待用户配置的延迟秒数。如果期间亮屏或检测到步行则取消。
-    // Unconfirmed Running: 计时已开始但未确认。用户解锁时震动+通知提醒。
-    //   - 用户确认 → 正常计时
-    //   - 用户取消 → 回到 Idle
-    //   - 用户忽略并再次锁屏 → 取消当前计时，重新进入 Pending
-    //   - 首次计费（cost > 0）→ 自动确认
-    // 计步器: 步频 > 用户配置阈值 = 走路（非跳舞）→ 取消 pending
-
-    /**
-     * 进入延迟等待阶段 — 锁屏后不立即计时，等待指定秒数
-     */
-    private fun enterPendingAutoStart(delaySeconds: Int) {
-        if (isPendingAutoStart) return
-        isPendingAutoStart = true
-        pendingAutoStartDelaySeconds = delaySeconds
-        stepTimestamps.clear()
-        stepDetectionStartTime = SystemClock.elapsedRealtime()
-
-        Log.d(TAG, "进入延迟等待阶段: ${delaySeconds}秒后自动计时")
-
-        // 注册亮屏接收器 — 如果期间亮屏则取消
-        registerScreenOnReceiver()
-
-        // 启动计步器（仅当用户开启实验性功能时）
-        serviceScope.launch {
-            val prefs = UserPreferencesManager(applicationContext)
-            val stepEnabled = prefs.stepDetectionEnabled.first()
-            if (stepEnabled) {
-                // 加载用户配置的步行阈值
-                activeStepWalkingThreshold = prefs.stepWalkingThreshold.first()
-                startStepDetection()
-            } else {
-                Log.d(TAG, "计步器防误触未开启，跳过")
-            }
-        }
-
-        // 延迟后启动计时
-        pendingAutoStartRunnable = Runnable {
-            if (isPendingAutoStart) {
-                isPendingAutoStart = false
-                unregisterScreenOnReceiver()
-
-                // 检查步频是否为走路
-                if (isWalkingDetected()) {
-                    Log.d(TAG, "延迟等待期间检测到步行，进入步行监控模式")
-                    // 不立即放弃：持续监控，步行停止后重新进入延迟等待
-                    startWalkingMonitor(delaySeconds)
-                    return@Runnable
-                }
-                stopStepDetection()
-
-                Log.d(TAG, "延迟等待结束，启动自动计时")
-                handleStart(isAuto = true)
-            }
-        }
-        handler.postDelayed(pendingAutoStartRunnable!!, delaySeconds * 1000L)
-    }
-
-    /**
-     * 取消延迟等待 — 亮屏、用户操作、服务退出时调用
-     */
-    private fun cancelPendingAutoStart() {
-        if (!isPendingAutoStart) return
-        Log.d(TAG, "取消延迟等待")
-        isPendingAutoStart = false
-        pendingAutoStartRunnable?.let { handler.removeCallbacks(it) }
-        pendingAutoStartRunnable = null
-        unregisterScreenOnReceiver()
-        stopStepDetection()
-    }
-
-    /**
-     * 步行监控模式 — 延迟到期检测到步行时进入。
-     * 每 [WALKING_CHECK_INTERVAL_MS] 毫秒检测一次步频：
-     *   - 仍在步行 → 继续等待（最长 [WALKING_MONITOR_TIMEOUT_MS]）
-     *   - 连续 [WALKING_STOPPED_CONFIRM_COUNT] 次非步行 → 重新进入延迟等待
-     *   - 期间亮屏 → screenOnReceiver 仍注册，触发后 cancelWalkingMonitoring()
-     */
-    private fun startWalkingMonitor(retryDelaySeconds: Int) {
-        if (isWalkingMonitoring) return
-        isWalkingMonitoring = true
-        walkingMonitorStartTime = SystemClock.elapsedRealtime()
-        walkingStoppedCount = 0
-        Log.d(TAG, "进入步行监控模式，等待步行停止后自动重试")
-        updateStandbyNotificationText("检测到步行，停下后将自动计时")
-
-        // 重新注册亮屏接收器 — 步行监控阶段亮屏同样应取消自动计时
-        registerScreenOnReceiver()
-
-        walkingCheckRunnable = object : Runnable {
-            override fun run() {
-                if (!isWalkingMonitoring) return
-
-                // 超时保障：超过上限后放弃，避免传感器长期驻留
-                val elapsed = SystemClock.elapsedRealtime() - walkingMonitorStartTime
-                if (elapsed > WALKING_MONITOR_TIMEOUT_MS) {
-                    Log.d(TAG, "步行监控超时 (${WALKING_MONITOR_TIMEOUT_MS / 60000}分钟)，放弃自动计时")
-                    cancelWalkingMonitoring()
-                    return
-                }
-
-                if (isWalkingDetected()) {
-                    // 仍在步行 — 继续等待
-                    walkingStoppedCount = 0
-                    handler.postDelayed(this, WALKING_CHECK_INTERVAL_MS)
-                } else {
-                    walkingStoppedCount++
-                    if (walkingStoppedCount >= WALKING_STOPPED_CONFIRM_COUNT) {
-                        // 已确认停止步行 → 重新进入延迟等待
-                        Log.d(TAG, "步行已停止 (连续${WALKING_STOPPED_CONFIRM_COUNT}次检测)，重新进入延迟等待 (${retryDelaySeconds}秒)")
-                        cancelWalkingMonitoring()
-                        // 清空旧步伐数据，让新延迟周期重新采样
-                        stepTimestamps.clear()
-                        stepDetectionStartTime = SystemClock.elapsedRealtime()
-                        enterPendingAutoStart(retryDelaySeconds)
-                    } else {
-                        handler.postDelayed(this, WALKING_CHECK_INTERVAL_MS)
-                    }
-                }
-            }
-        }
-        handler.postDelayed(walkingCheckRunnable!!, WALKING_CHECK_INTERVAL_MS)
-    }
-
-    /**
-     * 取消步行监控 — 亮屏、超时、成功停止步行后调用
-     */
-    private fun cancelWalkingMonitoring() {
-        if (!isWalkingMonitoring) return
-        isWalkingMonitoring = false
-        walkingCheckRunnable?.let { handler.removeCallbacks(it) }
-        walkingCheckRunnable = null
-        walkingStoppedCount = 0
-        stopStepDetection()
-        unregisterScreenOnReceiver()
-        Log.d(TAG, "步行监控已取消")
-    }
-
-    /**
-     * 更新待命通知正文 — 用于步行检测反馈，不影响其他字段
-     */
     private fun updateStandbyNotificationText(contentText: String) {
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID_STANDBY, buildStandbyNotification(contentText))
@@ -1704,14 +1165,7 @@ class TimerForegroundService : Service() {
         val lockElapsedRealtime = intent.getLongExtra(EXTRA_LOCK_EVENT_ELAPSED_REALTIME, 0L)
         if (lockTimestamp == 0L || lockElapsedRealtime == 0L) return
 
-        // 如果有延迟等待中的自动计时，取消
-        if (isPendingAutoStart) cancelPendingAutoStart()
-
-        isAutoStarted = false
-        hasUserReturned = false
         startTriggerType = DanceRecord.TRIGGER_LOCK_EVENT
-        autoConfirmResult = null
-        startScreenOffDelay = 0
 
         serviceScope.launch {
             val db = AppDatabase.getInstance(applicationContext)
@@ -1763,7 +1217,6 @@ class TimerForegroundService : Service() {
                 ruleId = ruleId,
                 isPaused = false,
                 isInGracePeriod = false,
-                isAutoStarted = false,
                 isBackdated = true
             )
 
@@ -1831,337 +1284,14 @@ class TimerForegroundService : Service() {
     /**
      * 用户确认自动计时 — 从通知或App内点击"继续计时"触发
      */
-    private fun handleConfirmAuto() {
-        val current = _timerState.value
-        if (current !is TimerState.Running || !isAutoStarted) return
-
-        Log.d(TAG, "用户确认自动计时")
-        isAutoStarted = false
-        hasUserReturned = false
-        autoConfirmResult = DanceRecord.RESULT_CONFIRMED_USER
-        stopStepDetection()
-        unregisterUserPresentReceiver()
-
-        // 取消弹头提醒通知
-        getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID_ALERT)
-
-        // 震动确认
-        VibrationHelper.vibrateFeedback(applicationContext)
-
-        // 更新状态（清除 isAutoStarted）
-        _timerState.value = current.copy(isAutoStarted = false)
-
-        // 更新通知为正常样式
-        val elapsed = current.elapsedSeconds
-        val inGrace = current.isInGracePeriod
-        val graceRemaining = if (inGrace) CostCalculator.getGraceRemainingSeconds(elapsed, tiers) else 0
-        val notification = buildRunningNotification(elapsed, current.cost, current.songCount, inGrace, graceRemaining)
-        startForeground(NOTIFICATION_ID_RUNNING, notification)
-        updateMediaSessionForRunning(current.cost)
-    }
-
-    // ===== 亮屏/解锁感知广播接收器 =====
-
-    private fun registerScreenOnReceiver() {
-        if (screenOnReceiver != null) return
-        screenOnReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                if (intent.action == Intent.ACTION_SCREEN_ON) {
-                    Log.d(TAG, "亮屏 → 取消自动计时准备（延迟等待 / 步行监控）")
-                    // 两种准备状态都需取消；各自内置幂等守卫，双调安全
-                    cancelPendingAutoStart()
-                    cancelWalkingMonitoring()
-                }
-            }
-        }
-        val filter = IntentFilter(Intent.ACTION_SCREEN_ON)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(screenOnReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(screenOnReceiver, filter)
-        }
-    }
-
-    private fun unregisterScreenOnReceiver() {
-        screenOnReceiver?.let {
-            try { unregisterReceiver(it) } catch (_: Exception) {}
-        }
-        screenOnReceiver = null
-    }
-
-    private fun registerUserPresentReceiver() {
-        if (userPresentReceiver != null) return
-        userPresentReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                when (intent.action) {
-                    Intent.ACTION_SCREEN_ON -> handleScreenOn()
-                    Intent.ACTION_USER_PRESENT -> handleUserPresent()
-                }
-            }
-        }
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_SCREEN_ON)
-            addAction(Intent.ACTION_USER_PRESENT)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(userPresentReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(userPresentReceiver, filter)
-        }
-    }
-
-    private fun unregisterUserPresentReceiver() {
-        userPresentReceiver?.let {
-            try { unregisterReceiver(it) } catch (_: Exception) {}
-        }
-        userPresentReceiver = null
-    }
-
-    /**
-     * 屏幕亮起 — 设置 hasUserReturned 标记
-     * 作用：OPPO/ColorOS 等设备可能不发送 ACTION_USER_PRESENT（尤其是指纹/面部解锁），
-     * 但 ACTION_SCREEN_ON 在所有设备上都可靠发送。
-     * 屏幕亮起 = 用户大概率看到了通知栏的自动计时提醒，不应视为误触。
-     */
-    private fun handleScreenOn() {
-        val current = _timerState.value
-        if (current !is TimerState.Running || !isAutoStarted) return
-        if (hasUserReturned) return
-
-        Log.d(TAG, "屏幕亮起，标记 hasUserReturned=true（用户可能已看到自动计时通知）")
-        hasUserReturned = true
-        // 不震动 — 等 ACTION_USER_PRESENT 解锁后再震动提醒
-    }
-
-    /**
-     * 用户解锁返回 — 震动提醒 + 更新通知为确认样式
-     */
-    private fun handleUserPresent() {
-        val current = _timerState.value
-        if (current !is TimerState.Running || !isAutoStarted) return
-
-        Log.d(TAG, "用户解锁（ACTION_USER_PRESENT），hasUserReturned=$hasUserReturned")
-
-        // 确保标记已设置（SCREEN_ON 可能已经设过，这里兜底）
-        hasUserReturned = true
-
-        // 震动提醒
-        VibrationHelper.vibrateFeedback(applicationContext)
-
-        // 更新通知为确认样式
-        val elapsed = ((SystemClock.elapsedRealtime() - startElapsedRealtime) / 1000).toInt()
-        val cost = CostCalculator.calculate(elapsed, tiers)
-        val songCount = CostCalculator.getSongCount(elapsed, tiers)
-        val inGrace = CostCalculator.isInGracePeriod(elapsed, tiers)
-        val graceRemaining = if (inGrace) CostCalculator.getGraceRemainingSeconds(elapsed, tiers) else 0
-        val notification = buildRunningNotification(elapsed, cost, songCount, inGrace, graceRemaining)
-        startForeground(NOTIFICATION_ID_RUNNING, notification)
-    }
-
-    // ===== 计步器防误触 =====
-
-    /**
-     * 启动计步器 — 使用 TYPE_STEP_DETECTOR 检测步行
-     * 跳舞时身体原地律动，步数低。走路/游走时步数高。
-     * 因此 高步频 = 非跳舞 → 取消自动计时。
-     */
-    private fun startStepDetection() {
-        if (stepSensorManager != null) return // already active
-
-        // API 29+ 需要 ACTIVITY_RECOGNITION 权限
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (checkSelfPermission(android.Manifest.permission.ACTIVITY_RECOGNITION)
-                != android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                Log.d(TAG, "缺少 ACTIVITY_RECOGNITION 权限，跳过计步检测")
-                return
-            }
-        }
-
-        val sm = getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
-        val detector = sm.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) ?: run {
-            Log.d(TAG, "设备不支持 TYPE_STEP_DETECTOR，跳过计步检测")
-            return
-        }
-
-        stepSensorManager = sm
-        stepTimestamps.clear()
-        stepDetectionStartTime = SystemClock.elapsedRealtime()
-
-        stepListener = object : SensorEventListener {
-            override fun onSensorChanged(event: SensorEvent) {
-                if (event.sensor.type == Sensor.TYPE_STEP_DETECTOR) {
-                    stepTimestamps.add(SystemClock.elapsedRealtime())
-                }
-            }
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-        }
-
-        sm.registerListener(stepListener, detector, SensorManager.SENSOR_DELAY_NORMAL)
-        Log.d(TAG, "计步器已启动")
-    }
-
-    private fun stopStepDetection() {
-        stepListener?.let { listener ->
-            stepSensorManager?.unregisterListener(listener)
-        }
-        stepListener = null
-        stepSensorManager = null
-        stepTimestamps.clear()
-    }
-
-    /**
-     * 判断是否检测到步行 — 步频 > [STEP_WALKING_THRESHOLD_PER_MINUTE] 步/分钟视为走路
-     *
-     * 使用滚动时间窗口（固定 [STEP_DETECTION_WINDOW_SECONDS] 秒），
-     * 与延迟配置长短无关，精度稳定。
-     */
-    private fun isWalkingDetected(): Boolean {
-        if (stepSensorManager == null) return false // 计步器未启动，不做判断
-
-        val now = SystemClock.elapsedRealtime()
-
-        // 最小采样时长检查 — 数据太少时不做判断（返回 false = 不阻止计时）
-        val sinceStartMs = now - stepDetectionStartTime
-        if (sinceStartMs < STEP_DETECTION_MIN_SAMPLE_MS) {
-            Log.d(TAG, "计步: 采样时长不足 (${sinceStartMs}ms < ${STEP_DETECTION_MIN_SAMPLE_MS}ms)，跳过判断")
-            return false
-        }
-
-        // 滚动窗口：仅统计最近 STEP_DETECTION_WINDOW_SECONDS 秒内的步伐
-        val windowMs = STEP_DETECTION_WINDOW_SECONDS * 1000L
-        val windowStartMs = now - windowMs
-        val recentSteps = stepTimestamps.count { it >= windowStartMs }
-
-        // 有效窗口时长：取「自检测启动以来经过的时间」与「完整窗口」的较小值
-        val effectiveWindowMs = minOf(sinceStartMs, windowMs)
-        val effectiveWindowSec = effectiveWindowMs / 1000.0
-
-        val stepsPerMinute = if (effectiveWindowSec > 0) (recentSteps / effectiveWindowSec) * 60.0 else 0.0
-        val isWalking = stepsPerMinute > activeStepWalkingThreshold
-        Log.d(TAG, "计步(滚动${STEP_DETECTION_WINDOW_SECONDS}s窗口): ${recentSteps}步/${effectiveWindowSec.toInt()}秒, ${stepsPerMinute.toInt()}步/分, 阈值=${activeStepWalkingThreshold}, 走路=$isWalking")
-        return isWalking
-    }
-
-    // ===== 自动计时启动提醒 =====
-
-    /**
-     * 强化震动 — 两段式脉冲，确保息屏状态下用户能感知到
-     */
-    private fun vibrateAutoStartAlert(context: Context) {
-        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
-            manager.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // 间隔: 0ms等待, 300ms震, 200ms停, 300ms震
-            vibrator.vibrate(
-                VibrationEffect.createWaveform(longArrayOf(0, 300, 200, 300), -1)
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator.vibrate(longArrayOf(0, 300, 200, 300), -1)
-        }
-    }
-
-    /**
-     * 发送高优先级 heads-up 弹头通知 — 即使锁屏也能弹出
-     * 通知自动 5 秒后消失
-     */
-    private fun fireAutoStartAlertNotification() {
-        val nm = getSystemService(NotificationManager::class.java)
-        val areNotificationsEnabled = nm.areNotificationsEnabled()
-        val alertChannel = nm.getNotificationChannel(CHANNEL_ID_ALERT)
-        val channelImportance = alertChannel?.importance ?: -1
-        val canFsi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) nm.canUseFullScreenIntent() else true
-        Log.d(TAG, "fireAutoStartAlert: notifEnabled=$areNotificationsEnabled channelImportance=$channelImportance canUseFullScreenIntent=$canFsi")
-
-        val contentIntent = PendingIntent.getActivity(
-            this, 10,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val cancelAutoIntent = PendingIntent.getService(
-            this, 11,
-            Intent(this, TimerForegroundService::class.java).apply {
-                action = ACTION_CANCEL_AUTO
-            },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID_ALERT)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setLargeIcon(android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher))
-            .setContentTitle("自动计时已触发")
-            .setSubText("舞蹈计时器")
-            .setContentText("息屏触发 · 误触请点击取消")
-            .setContentIntent(contentIntent)
-            .setAutoCancel(true)
-            .setTimeoutAfter(15_000) // 15秒后自动消失
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .setCategory(Notification.CATEGORY_ALARM)
-            .addAction(
-                Notification.Action.Builder(
-                    android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_stop_notification),
-                    "取消计时",
-                    cancelAutoIntent
-                ).build()
-            )
-            .setColor(0xFFE65100.toInt())
-            .apply {
-                // fullScreenIntent causes system_server to invoke FLAG_TURN_SCREEN_ON
-                // via WindowManager, briefly lighting the lock screen — same as WeChat.
-                // On API 34+ this requires USE_FULL_SCREEN_INTENT to be granted.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    if (canFsi) {
-                        setFullScreenIntent(contentIntent, true)
-                        Log.d(TAG, "fireAutoStartAlert: setFullScreenIntent applied (API 34+)")
-                    } else {
-                        Log.w(TAG, "fireAutoStartAlert: USE_FULL_SCREEN_INTENT not granted, no screen wake")
-                    }
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    setFullScreenIntent(contentIntent, true)
-                    Log.d(TAG, "fireAutoStartAlert: setFullScreenIntent applied (API < 34)")
-                }
-            }
-            .build()
-
-        nm.notify(NOTIFICATION_ID_ALERT, notification)
-
-        Log.d(TAG, "Alert notification sent for auto-start")
-    }
-
-    /**
-     * Launch LockScreenTimerActivity to wake the screen and display timer info
-     * on a pure-black full-screen overlay — identical to the AOD/WeChat effect.
-     *
-     * Uses AlarmManager.setAlarmClock() to bypass Background Activity Launch (BAL)
-     * restrictions enforced by OEM ROMs (OPPO/ColorOS/MIUI on Android 12+).
-     * setAlarmClock() grants the app a BAL token that lets it start an Activity
-     * from the background — the same privilege used by system alarm clock apps.
-     *
-     * Only fires when the screen is off (interactive == false).
-     */
     private fun startLockScreenActivity(
         songCount: Int,
         cost: Float,
-        elapsedSeconds: Int,
-        isAutoStart: Boolean
+        elapsedSeconds: Int
     ) {
         val pm = getSystemService(android.os.PowerManager::class.java)
         val screenOn = pm.isInteractive
-        Log.d(TAG, "startLockScreenActivity: screenOn=$screenOn song=$songCount cost=$cost elapsed=${elapsedSeconds}s autoStart=$isAutoStart")
+        Log.d(TAG, "startLockScreenActivity: screenOn=$screenOn song=$songCount cost=$cost elapsed=${elapsedSeconds}s")
         if (screenOn) {
             Log.d(TAG, "startLockScreenActivity: screen is interactive, skip overlay")
             return
@@ -2171,8 +1301,7 @@ class TimerForegroundService : Service() {
             context = applicationContext,
             songCount = songCount,
             cost = cost,
-            elapsedSeconds = elapsedSeconds,
-            isAutoStart = isAutoStart
+            elapsedSeconds = elapsedSeconds
         )
         val activityPi = PendingIntent.getActivity(
             applicationContext,

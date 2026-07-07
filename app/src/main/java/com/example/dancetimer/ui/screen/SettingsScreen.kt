@@ -1,23 +1,14 @@
 package com.example.dancetimer.ui.screen
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -25,15 +16,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -45,7 +32,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.example.dancetimer.BuildConfig
 import com.example.dancetimer.data.preferences.ThemeMode
-import com.example.dancetimer.data.preferences.TriggerMode
 import com.example.dancetimer.data.update.UpdateState
 import com.example.dancetimer.ui.navigation.Screen
 import com.example.dancetimer.ui.screen.components.BackgroundGuideDialog
@@ -60,35 +46,12 @@ fun SettingsScreen(
         viewModelStoreOwner = LocalContext.current as androidx.activity.ComponentActivity
     )
 ) {
-    val triggerMode by viewModel.triggerMode.collectAsState(initial = TriggerMode.LONG_PRESS)
     val vibrateOnTier by viewModel.vibrateOnTier.collectAsState(initial = true)
-    val autoStartOnScreenOff by viewModel.autoStartOnScreenOff.collectAsState(initial = false)
-    val autoStartDelay by viewModel.autoStartDelaySeconds.collectAsState(initial = 180)
-    val stepDetectionEnabled by viewModel.stepDetectionEnabled.collectAsState(initial = false)
-    val stepWalkingThreshold by viewModel.stepWalkingThreshold.collectAsState(initial = 80)
     val lockEventRecordEnabled by viewModel.lockEventRecordEnabled.collectAsState(initial = true)
     val themeMode by viewModel.themeMode.collectAsState(initial = ThemeMode.SYSTEM)
     val updateState by viewModel.updateState.collectAsState()
     val pendingUpdate by viewModel.pendingUpdateInfo.collectAsState()
     val context = LocalContext.current
-    // 需要 Activity 引用来判断 shouldShowRequestPermissionRationale
-    val activity = context as? android.app.Activity
-
-    // ACTIVITY_RECOGNITION 权限请求 — 开启步行检测前需获取
-    val activityRecognitionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            viewModel.setStepDetectionEnabled(true)
-        } else {
-            // 用户拒绝后，引导到系统设置页手动开启
-            Toast.makeText(context, "请在系统设置中授予「健身运动」权限", Toast.LENGTH_LONG).show()
-            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", context.packageName, null)
-            }
-            context.startActivity(intent)
-        }
-    }
 
     var showBatteryGuide by remember { mutableStateOf(false) }
     // 每次回到前台重新检测
@@ -202,60 +165,36 @@ fun SettingsScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                Column {
-                    ThemeModeOption(
-                        label = "深色模式",
-                        selected = themeMode == ThemeMode.DARK,
-                        onClick = { viewModel.setThemeMode(ThemeMode.DARK) }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.DarkMode,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
                     )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-                    )
-                    ThemeModeOption(
-                        label = "浅色模式",
-                        selected = themeMode == ThemeMode.LIGHT,
-                        onClick = { viewModel.setThemeMode(ThemeMode.LIGHT) }
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-                    )
-                    ThemeModeOption(
-                        label = "跟随系统",
-                        selected = themeMode == ThemeMode.SYSTEM,
-                        onClick = { viewModel.setThemeMode(ThemeMode.SYSTEM) }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // ===== 触发方式 =====
-            SettingSectionHeader("触发方式")
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column {
-                    TriggerModeOption(
-                        label = "长按音量键 (1.5秒)",
-                        description = "长按不易误触，推荐",
-                        selected = triggerMode == TriggerMode.LONG_PRESS,
-                        onClick = { viewModel.setTriggerMode(TriggerMode.LONG_PRESS) }
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
-                    )
-                    TriggerModeOption(
-                        label = "三连按音量键",
-                        description = "600ms内连按3次触发",
-                        selected = triggerMode == TriggerMode.TRIPLE_CLICK,
-                        onClick = { viewModel.setTriggerMode(TriggerMode.TRIPLE_CLICK) }
-                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1f)) {
+                        SegmentedButton(
+                            selected = themeMode == ThemeMode.LIGHT,
+                            onClick = { viewModel.setThemeMode(ThemeMode.LIGHT) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3)
+                        ) { Text("浅色", style = MaterialTheme.typography.labelSmall) }
+                        SegmentedButton(
+                            selected = themeMode == ThemeMode.SYSTEM,
+                            onClick = { viewModel.setThemeMode(ThemeMode.SYSTEM) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3)
+                        ) { Text("跟随系统", style = MaterialTheme.typography.labelSmall) }
+                        SegmentedButton(
+                            selected = themeMode == ThemeMode.DARK,
+                            onClick = { viewModel.setThemeMode(ThemeMode.DARK) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3)
+                        ) { Text("深色", style = MaterialTheme.typography.labelSmall) }
+                    }
                 }
             }
 
@@ -277,124 +216,6 @@ fun SettingsScreen(
                         checked = vibrateOnTier,
                         onCheckedChange = { viewModel.setVibrateOnTier(it) }
                     )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
-                    )
-                    // 息屏自动计时
-                    SettingSwitchItem(
-                        title = "息屏/锁屏后自动开始",
-                        description = if (autoStartOnScreenOff)
-                            buildAnnotatedString {
-                                append("锁屏后等待 ")
-                                withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                                    append(if (autoStartDelay >= 60)
-                                        "${autoStartDelay / 60}分${if (autoStartDelay % 60 > 0) "${autoStartDelay % 60}秒" else ""}"
-                                    else
-                                        "${autoStartDelay}秒"
-                                    )
-                                }
-                                append(" 未亮屏则自动计时，首曲计费前可取消")
-                            }
-                        else
-                            buildAnnotatedString { append("开启后，锁屏将自动触发计时（智能防误触）") },
-                        checked = autoStartOnScreenOff,
-                        onCheckedChange = { viewModel.setAutoStartOnScreenOff(it) }
-                    )
-                    // 展开延迟设置
-                    if (autoStartOnScreenOff) {
-                        // 子配置区域：左侧竖线 + 缩进背景，明确归属关系
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.06f))
-                        ) {
-                            // 左侧强调竖线
-                            Box(
-                                modifier = Modifier
-                                    .width(4.dp)
-                                    .fillMaxHeight()
-                                    .background(MaterialTheme.colorScheme.primary)
-                            )
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                AutoStartDelaySelector(
-                                    selectedDelay = autoStartDelay,
-                                    onDelaySelected = { viewModel.setAutoStartDelaySeconds(it) },
-                                    stepDetectionEnabled = stepDetectionEnabled
-                                )
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(horizontal = 16.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)
-                                )
-                                // 步行防误触
-                                SettingSwitchItem(
-                                    title = "步行中不触发计时",
-                                    description = if (autoStartDelay < 10 && stepDetectionEnabled)
-                                        buildAnnotatedString {
-                                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.error)) {
-                                                append("⚠ 延迟${autoStartDelay}秒过短，步行检测不准确，建议延迟≥ 10秒")
-                                            }
-                                        }
-                                    else if (autoStartDelay < 10)
-                                        buildAnnotatedString { append("等待期间检测步行(>${stepWalkingThreshold}步/分)则停止自动计时，停下后自动重试(建议延迟≥ 10秒)")
-                                        }
-                                    else
-                                        buildAnnotatedString { append("等待期间检测步行(>${stepWalkingThreshold}步/分)则停止自动计时，停下后自动重试") },
-                                    checked = stepDetectionEnabled,
-                                    onCheckedChange = { enabled ->
-                                        if (enabled) {
-                                            // Android 10+ 需要 ACTIVITY_RECOGNITION 运行时权限
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                                val granted = ContextCompat.checkSelfPermission(
-                                                    context, Manifest.permission.ACTIVITY_RECOGNITION
-                                                ) == PackageManager.PERMISSION_GRANTED
-                                                if (granted) {
-                                                    viewModel.setStepDetectionEnabled(true)
-                                                } else {
-                                                    // 判断是否还能弹系统权限对话框
-                                                    val canAskAgain = activity?.let {
-                                                        ActivityCompat.shouldShowRequestPermissionRationale(
-                                                            it, Manifest.permission.ACTIVITY_RECOGNITION
-                                                        )
-                                                    } ?: true // 无法判断时尝试弹窗
-                                                    if (canAskAgain) {
-                                                        // 用户曾拒绝但未勾选"不再提示"，可再次弹窗
-                                                        activityRecognitionLauncher.launch(
-                                                            Manifest.permission.ACTIVITY_RECOGNITION
-                                                        )
-                                                    } else {
-                                                        // 首次请求 或 用户已选择"不再提示"
-                                                        // 首次时 shouldShow=false，launcher 仍然会弹出系统对话框
-                                                        // 永久拒绝时 shouldShow=false，launcher 回调直接返回 false
-                                                        // 统一走 launcher：首次能弹窗；永久拒绝由回调跳转设置页
-                                                        activityRecognitionLauncher.launch(
-                                                            Manifest.permission.ACTIVITY_RECOGNITION
-                                                        )
-                                                    }
-                                                }
-                                            } else {
-                                                // Android 9 及以下无需运行时权限
-                                                viewModel.setStepDetectionEnabled(true)
-                                            }
-                                        } else {
-                                            viewModel.setStepDetectionEnabled(false)
-                                        }
-                                    }
-                                )
-                                // 步行阈值配置（仅在步行检测开启时显示）
-                                if (stepDetectionEnabled) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(horizontal = 16.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)
-                                    )
-                                    StepThresholdSelector(
-                                        selectedThreshold = stepWalkingThreshold,
-                                        onThresholdSelected = { viewModel.setStepWalkingThreshold(it) }
-                                    )
-                                }
-                            }
-                        }
-                    }
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = 16.dp),
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
@@ -490,7 +311,7 @@ fun SettingsScreen(
                                     )
                                 } else {
                                     Text(
-                                        text = "✅ 已授权，新曲/自动计时时将唤亮锁屏",
+                                        text = "✅ 已授权，新曲计费时将唤亮锁屏",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.primary,
                                         lineHeight = 16.sp
@@ -732,293 +553,3 @@ private fun SettingSwitchItem(
     }
 }
 
-@Composable
-private fun AutoStartDelaySelector(
-    selectedDelay: Int,
-    onDelaySelected: (Int) -> Unit,
-    stepDetectionEnabled: Boolean = false
-) {
-    // 预设选项：秒 + 分钟
-    data class DelayOption(val label: String, val seconds: Int)
-    val presets = listOf(
-        DelayOption("5秒", 5), DelayOption("10秒", 10), DelayOption("15秒", 15),
-        DelayOption("30秒", 30), DelayOption("1分", 60), DelayOption("2分", 120),
-        DelayOption("3分", 180), DelayOption("5分", 300)
-    )
-    // 步行检测开启时，5秒延迟对应的采样时长不足，提示建议延迟
-    val stepMinRecommended = if (stepDetectionEnabled) 10 else 0
-    val isCustom = selectedDelay !in presets.map { it.seconds }
-    var showCustomInput by remember { mutableStateOf(isCustom) }
-    var customText by remember { mutableStateOf(if (isCustom) selectedDelay.toString() else "") }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
-    ) {
-        Text(
-            "延迟等待时间（触发等待时间，不影响计时）",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        // 步行检测开启且当前延迟过短时显示提示
-        if (stepDetectionEnabled && selectedDelay < stepMinRecommended) {
-            Text(
-                "⚠ 延迟过短会降低步行检测准确度，建议选择 ≥ 10秒",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(bottom = 6.dp)
-            )
-        }
-
-        // 所有选项在一行可滚动Row中
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            presets.forEach { option ->
-                FilterChip(
-                    selected = selectedDelay == option.seconds && !showCustomInput,
-                    onClick = {
-                        showCustomInput = false
-                        onDelaySelected(option.seconds)
-                    },
-                    label = {
-                        Text(
-                            option.label,
-                            style = MaterialTheme.typography.labelSmall,
-                            // 步行检测开启时，5秒选项标识为不推荐（加利线）
-                            color = if (stepDetectionEnabled && option.seconds < stepMinRecommended)
-                                MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
-                            else
-                                MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                )
-            }
-            FilterChip(
-                selected = showCustomInput || isCustom,
-                onClick = {
-                    if (showCustomInput) {
-                        // 再次点击 → 关闭自定义输入
-                        showCustomInput = false
-                    } else {
-                        customText = selectedDelay.toString()
-                        showCustomInput = true
-                    }
-                },
-                label = {
-                    Text(
-                        if (isCustom && !showCustomInput)
-                            "自定义:${if (selectedDelay >= 60) "${selectedDelay/60}分${selectedDelay%60}秒" else "${selectedDelay}秒"}"
-                        else
-                            "自定义",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-            )
-        }
-
-        // 自定义输入框
-        if (showCustomInput) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = customText,
-                    onValueChange = { customText = it.filter { c -> c.isDigit() } },
-                    label = { Text("秒数（1〜600）") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                    textStyle = MaterialTheme.typography.bodyMedium
-                )
-                FilledTonalButton(
-                    onClick = {
-                        val v = customText.toIntOrNull() ?: 0
-                        if (v in 1..600) {
-                            onDelaySelected(v)
-                            showCustomInput = false
-                        }
-                    },
-                    enabled = (customText.toIntOrNull() ?: 0) in 1..600
-                ) { Text("确定") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepThresholdSelector(
-    selectedThreshold: Int,
-    onThresholdSelected: (Int) -> Unit
-) {
-    data class ThresholdOption(val label: String, val value: Int)
-    val presets = listOf(
-        ThresholdOption("60步/分", 60),
-        ThresholdOption("70步/分", 70),
-        ThresholdOption("80步/分", 80),
-        ThresholdOption("90步/分", 90),
-        ThresholdOption("100步/分", 100),
-        ThresholdOption("120步/分", 120)
-    )
-    val isCustom = selectedThreshold !in presets.map { it.value }
-    var showCustomInput by remember { mutableStateOf(isCustom) }
-    var customText by remember { mutableStateOf(if (isCustom) selectedThreshold.toString() else "") }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)
-    ) {
-        Text(
-            "步行判定阈值（超过此步频视为步行）",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            presets.forEach { option ->
-                FilterChip(
-                    selected = selectedThreshold == option.value && !showCustomInput,
-                    onClick = {
-                        showCustomInput = false
-                        onThresholdSelected(option.value)
-                    },
-                    label = {
-                        Text(
-                            option.label,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                )
-            }
-            FilterChip(
-                selected = showCustomInput || isCustom,
-                onClick = {
-                    if (showCustomInput) {
-                        showCustomInput = false
-                    } else {
-                        customText = selectedThreshold.toString()
-                        showCustomInput = true
-                    }
-                },
-                label = {
-                    Text(
-                        if (isCustom && !showCustomInput)
-                            "自定义:${selectedThreshold}步/分"
-                        else
-                            "自定义",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-            )
-        }
-
-        // 自定义输入框
-        if (showCustomInput) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = customText,
-                    onValueChange = { customText = it.filter { c -> c.isDigit() } },
-                    label = { Text("步/分（10〜300）") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                    textStyle = MaterialTheme.typography.bodyMedium
-                )
-                FilledTonalButton(
-                    onClick = {
-                        val v = customText.toIntOrNull() ?: 0
-                        if (v in 10..300) {
-                            onThresholdSelected(v)
-                            showCustomInput = false
-                        }
-                    },
-                    enabled = (customText.toIntOrNull() ?: 0) in 10..300
-                ) { Text("确定") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TriggerModeOption(
-    label: String,
-    description: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(
-            selected = selected,
-            onClick = null,
-            colors = RadioButtonDefaults.colors(
-                selectedColor = MaterialTheme.colorScheme.primary,
-                unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Column {
-            Text(
-                label,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun ThemeModeOption(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(
-            selected = selected,
-            onClick = null,
-            colors = RadioButtonDefaults.colors(
-                selectedColor = MaterialTheme.colorScheme.primary,
-                unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-    }
-}

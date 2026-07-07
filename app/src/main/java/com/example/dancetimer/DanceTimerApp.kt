@@ -49,5 +49,17 @@ class DanceTimerApp : Application() {
         dao.insertTiers(listOf(
             PriceTier(ruleId = rule3Id, durationMinutes = 1.0f, price = 5f, sortOrder = 0)
         ))
+
+        // 预设规则4：3分钟10元
+        val rule4Id = dao.insertRule(PricingRule(name = "3分钟10元"))
+        dao.insertTiers(listOf(
+            PriceTier(ruleId = rule4Id, durationMinutes = 3.0f, price = 10f, sortOrder = 0)
+        ))
+
+        // 预设规则5：3分钟20元
+        val rule5Id = dao.insertRule(PricingRule(name = "3分钟20元"))
+        dao.insertTiers(listOf(
+            PriceTier(ruleId = rule5Id, durationMinutes = 3.0f, price = 20f, sortOrder = 0)
+        ))
     }
 }

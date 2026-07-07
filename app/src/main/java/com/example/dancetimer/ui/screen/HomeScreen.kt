@@ -18,7 +18,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-import com.example.dancetimer.data.preferences.TriggerMode
 import com.example.dancetimer.data.update.UpdateState
 import com.example.dancetimer.service.TimerState
 import com.example.dancetimer.ui.navigation.Screen
@@ -44,12 +43,15 @@ fun HomeScreen(
 ) {
     val timerState by viewModel.timerState.collectAsState()
     val defaultRule by viewModel.defaultRule.collectAsState(initial = null)
-    val triggerMode by viewModel.triggerMode.collectAsState(initial = TriggerMode.LONG_PRESS)
     val updateState by settingsViewModel.updateState.collectAsState()
     val recentLockEvents by viewModel.recentLockEvents.collectAsState(initial = emptyList())
     val allRulesWithTiers by viewModel.allRulesWithTiers.collectAsState(initial = emptyList())
     val selectedLockEventRuleId by viewModel.selectedLockEventRuleId.collectAsState()
     val lockEventRecordEnabled by viewModel.lockEventRecordEnabled.collectAsState(initial = true)
+    val volumeTipPermanentlyDismissed by viewModel.volumeTipDismissed.collectAsState(initial = false)
+    val usedLockEventIds by viewModel.usedLockEventIds.collectAsState()
+    // 本次会话内关闭提示（不持久化）
+    var volumeTipSessionDismissed by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var showBatteryGuide by remember { mutableStateOf(false) }
     // 每次回到前台重新检测电池优化状态
@@ -158,12 +160,12 @@ fun HomeScreen(
                 when (val state = timerState) {
                     is TimerState.Idle -> TimerIdleContent(
                         ruleName = defaultRule?.rule?.name,
-                        triggerMode = triggerMode,
                         isBatteryOptimized = isBatteryOptimized,
                         recentLockEvents = if (lockEventRecordEnabled) recentLockEvents else emptyList(),
                         allRules = allRulesWithTiers,
                         selectedLockEventRuleId = selectedLockEventRuleId,
                         defaultRuleId = defaultRule?.rule?.id,
+                        showVolumeTip = !volumeTipPermanentlyDismissed && !volumeTipSessionDismissed,
                         onStartClick = { viewModel.startTimer() },
                         onRulesClick = {
                             navController.navigate(Screen.PricingRules.route) { launchSingleTop = true }
@@ -172,17 +174,19 @@ fun HomeScreen(
                         onLockEventRuleSelected = { viewModel.setSelectedLockEventRuleId(it) },
                         onStartFromLockEvent = { viewModel.startTimerFromLockEvent(it) },
                         onFinishFromLockEvent = { viewModel.finishFromLockEvent(it) },
+                        usedLockEventIds = usedLockEventIds,
+                        onMarkLockEventUsed = { viewModel.markLockEventUsed(it) },
                         onViewAllLockEvents = {
                             navController.navigate(Screen.LockEventHistory.route) { launchSingleTop = true }
-                        }
+                        },
+                        onDismissVolumeTipOnce = { volumeTipSessionDismissed = true },
+                        onDismissVolumeTipPermanently = { viewModel.dismissVolumeTipPermanently() }
                     )
                     is TimerState.Running -> TimerRunningContent(
                         state = state,
                         onPauseClick = { viewModel.pauseTimer() },
                         onResumeClick = { viewModel.resumeTimer() },
                         onStopClick = { viewModel.stopTimer() },
-                        onCancelAutoClick = { viewModel.cancelAutoStart() },
-                        onConfirmAutoClick = { viewModel.confirmAutoTimer() },
                         onRuleClick = {
                             navController.navigate(
                                 Screen.EditRule.createRoute(state.ruleId)

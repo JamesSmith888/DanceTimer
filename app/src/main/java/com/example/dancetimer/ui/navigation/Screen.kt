@@ -15,4 +15,5 @@ sealed class Screen(val route: String) {
     }
     data object Settings : Screen("settings")
     data object LockEventHistory : Screen("lock_event_history")
+    data object Stats : Screen("stats")
 }

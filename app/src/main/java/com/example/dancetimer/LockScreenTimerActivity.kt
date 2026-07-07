@@ -65,14 +65,12 @@ class LockScreenTimerActivity : ComponentActivity() {
         const val EXTRA_SONG_COUNT = "extra_song_count"
         const val EXTRA_COST = "extra_cost"
         const val EXTRA_ELAPSED_SECONDS = "extra_elapsed_seconds"
-        const val EXTRA_IS_AUTO_START = "extra_is_auto_start"
 
         fun createIntent(
             context: Context,
             songCount: Int,
             cost: Float,
-            elapsedSeconds: Int,
-            isAutoStart: Boolean = false
+            elapsedSeconds: Int
         ): Intent = Intent(context, LockScreenTimerActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_NO_USER_ACTION or
@@ -80,7 +78,6 @@ class LockScreenTimerActivity : ComponentActivity() {
             putExtra(EXTRA_SONG_COUNT, songCount)
             putExtra(EXTRA_COST, cost)
             putExtra(EXTRA_ELAPSED_SECONDS, elapsedSeconds)
-            putExtra(EXTRA_IS_AUTO_START, isAutoStart)
         }
     }
 
@@ -120,16 +117,14 @@ class LockScreenTimerActivity : ComponentActivity() {
         val songCount = intent.getIntExtra(EXTRA_SONG_COUNT, 0)
         val cost = intent.getFloatExtra(EXTRA_COST, 0f)
         val elapsedSeconds = intent.getIntExtra(EXTRA_ELAPSED_SECONDS, 0)
-        val isAutoStart = intent.getBooleanExtra(EXTRA_IS_AUTO_START, false)
 
-        Log.d(TAG, "LockScreenTimerActivity created: song=$songCount cost=$cost elapsed=${elapsedSeconds}s autoStart=$isAutoStart")
+        Log.d(TAG, "LockScreenTimerActivity created: song=$songCount cost=$cost elapsed=${elapsedSeconds}s")
 
         setContent {
             LockScreenContent(
                 initialSongCount = songCount,
                 initialCost = cost,
                 initialElapsedSeconds = elapsedSeconds,
-                isAutoStart = isAutoStart,
                 autoDismissMs = AUTO_DISMISS_MS,
                 onOpenApp = {
                     dismissHandler.removeCallbacks(autoDismissRunnable)
@@ -164,7 +159,6 @@ private fun LockScreenContent(
     initialSongCount: Int,
     initialCost: Float,
     initialElapsedSeconds: Int,
-    isAutoStart: Boolean,
     autoDismissMs: Long,
     onOpenApp: () -> Unit
 ) {
@@ -230,7 +224,7 @@ private fun LockScreenContent(
 
             // Status label
             Text(
-                text = if (isAutoStart) "息屏自动计时" else "计费提醒",
+                text = "计费提醒",
                 fontSize = 13.sp,
                 color = Color(0xFF9E9E9E),
                 letterSpacing = 2.sp

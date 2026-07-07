@@ -25,13 +25,13 @@ interface DanceRecordDao {
     @Query("SELECT * FROM dance_records WHERE startTime >= :startOfDay AND startTime < :endOfDay ORDER BY startTime DESC")
     fun getByDateRange(startOfDay: Long, endOfDay: Long): Flow<List<DanceRecord>>
 
-    /** 今日总费用 */
-    @Query("SELECT COALESCE(SUM(cost), 0) FROM dance_records WHERE startTime >= :startOfDay")
-    fun getTodayCost(startOfDay: Long): Flow<Float>
-
-    /** 指定时间范围的总费用 */
+    /** 指定时间范围的总费用（左闭右开区间：[from, to)） */
     @Query("SELECT COALESCE(SUM(cost), 0) FROM dance_records WHERE startTime >= :from AND startTime < :to")
     fun getCostInRange(from: Long, to: Long): Flow<Float>
+
+    /** 全部记录累计费用 */
+    @Query("SELECT COALESCE(SUM(cost), 0) FROM dance_records")
+    fun getTotalCost(): Flow<Float>
 
     /** 总记录数 */
     @Query("SELECT COUNT(*) FROM dance_records")

@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.dancetimer.data.db.AppDatabase
 import com.example.dancetimer.data.model.PricingRuleWithTiers
 import com.example.dancetimer.data.model.ScreenLockEvent
-import com.example.dancetimer.data.preferences.TriggerMode
 import com.example.dancetimer.data.preferences.UserPreferencesManager
 import com.example.dancetimer.service.TimerForegroundService
 import com.example.dancetimer.service.TimerState
@@ -26,8 +25,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     val timerState: StateFlow<TimerState> = TimerForegroundService.timerState
 
     val defaultRule: Flow<PricingRuleWithTiers?> = db.pricingRuleDao().getDefaultRuleWithTiersFlow()
-
-    val triggerMode: Flow<TriggerMode> = prefs.triggerMode
 
     // ── 锁屏事件记录 ──
 
@@ -127,12 +124,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         TimerForegroundService.resetToIdle()
     }
 
-    fun cancelAutoStart() {
-        TimerForegroundService.cancelAutoStart(getApplication())
-    }
+    /** 首页音量键提示是否永久关闭 */
+    val volumeTipDismissed: Flow<Boolean> = prefs.volumeTipDismissed
 
-    fun confirmAutoTimer() {
-        TimerForegroundService.confirmAutoStart(getApplication())
+    /** 永久关闭首页提示 */
+    fun dismissVolumeTipPermanently() {
+        viewModelScope.launch { prefs.setVolumeTipDismissed() }
     }
 
     /** 删除单条锁屏事件 */
@@ -153,5 +150,25 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _hasMoreEvents.value = false
             lockEventsPage = 0
         }
+    }
+
+    // ── 锁屏事件已使用标记 ──
+
+    /**
+     * 当前会话内已标记为“已使用”的锁屏事件 ID 集合。
+     *
+     * 说明：当用户点击“计时”或“计费”时，[TimerForegroundService] 会将 timerState 切换为
+     * Running/Finished，[TimerIdleContent] 随之离开 Composition 树。
+     * 若将已使用集合存在 Composable remember{} 中，会因 Composition 离开而被销毁。
+     * 因此将该状态提升到 ViewModel（生命周期与 Activity 绑定），
+     * 确保 Idle→Running/Finished→Idle 循环后“已使用”标记依然有效。
+     * App 重启时 ViewModel 重建，集合自然清空，无需额外管理。
+     */
+    private val _usedLockEventIds = MutableStateFlow(emptySet<Long>())
+    val usedLockEventIds: StateFlow<Set<Long>> = _usedLockEventIds.asStateFlow()
+
+    /** 将指定锁屏事件标记为已使用 */
+    fun markLockEventUsed(id: Long) {
+        _usedLockEventIds.update { it + id }
     }
 }

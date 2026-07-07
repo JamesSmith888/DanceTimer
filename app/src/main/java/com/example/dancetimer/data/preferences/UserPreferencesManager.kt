@@ -7,14 +7,6 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/** 触发方式枚举 */
-enum class TriggerMode {
-    /** 长按音量键 1.5 秒 */
-    LONG_PRESS,
-    /** 500ms 内连按 3 次 */
-    TRIPLE_CLICK
-}
-
 /** 主题模式枚举 */
 enum class ThemeMode {
     LIGHT,
@@ -30,14 +22,9 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 class UserPreferencesManager(private val context: Context) {
 
     companion object {
-        private val KEY_TRIGGER_MODE = stringPreferencesKey("trigger_mode")
         private val KEY_VIBRATE_ON_TIER = booleanPreferencesKey("vibrate_on_tier")
         private val KEY_DEFAULT_RULE_ID = longPreferencesKey("default_rule_id")
         private val KEY_FIRST_LAUNCH = booleanPreferencesKey("first_launch")
-        private val KEY_AUTO_START_ON_SCREEN_OFF = booleanPreferencesKey("auto_start_on_screen_off")
-        private val KEY_AUTO_START_DELAY_SECONDS = intPreferencesKey("auto_start_delay_seconds")
-        private val KEY_STEP_DETECTION_ENABLED = booleanPreferencesKey("step_detection_enabled")
-        private val KEY_STEP_WALKING_THRESHOLD = intPreferencesKey("step_walking_threshold")
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_BATTERY_GUIDE_SHOWN = booleanPreferencesKey("battery_guide_shown")
         private val KEY_LOCK_EVENT_RECORD_ENABLED = booleanPreferencesKey("lock_event_record_enabled")
@@ -47,19 +34,9 @@ class UserPreferencesManager(private val context: Context) {
         private val KEY_SKIPPED_VERSION = stringPreferencesKey("skipped_version")
         private val KEY_SNOOZE_UNTIL_TIME = longPreferencesKey("snooze_until_time")
         private val KEY_LAST_INSTALLED_UPDATE_VERSION = stringPreferencesKey("last_installed_update_version")
-    }
 
-    // ---- 触发方式 ----
-
-    val triggerMode: Flow<TriggerMode> = context.dataStore.data.map { prefs ->
-        val value = prefs[KEY_TRIGGER_MODE] ?: TriggerMode.LONG_PRESS.name
-        TriggerMode.valueOf(value)
-    }
-
-    suspend fun setTriggerMode(mode: TriggerMode) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_TRIGGER_MODE] = mode.name
-        }
+        // ---- 首页提示 ---
+        private val KEY_VOLUME_TIP_DISMISSED = booleanPreferencesKey("volume_tip_dismissed")
     }
 
     // ---- 震动提醒 ----
@@ -95,55 +72,6 @@ class UserPreferencesManager(private val context: Context) {
     suspend fun setFirstLaunchDone() {
         context.dataStore.edit { prefs ->
             prefs[KEY_FIRST_LAUNCH] = false
-        }
-    }
-
-    // ---- 息屏自动计时 ----
-
-    val autoStartOnScreenOff: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_AUTO_START_ON_SCREEN_OFF] ?: false
-    }
-
-    suspend fun setAutoStartOnScreenOff(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_AUTO_START_ON_SCREEN_OFF] = enabled
-        }
-    }
-
-    // ---- 自动计时延迟秒数 ----
-
-    val autoStartDelaySeconds: Flow<Int> = context.dataStore.data.map { prefs ->
-        prefs[KEY_AUTO_START_DELAY_SECONDS] ?: 180
-    }
-
-    suspend fun setAutoStartDelaySeconds(seconds: Int) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_AUTO_START_DELAY_SECONDS] = seconds
-        }
-    }
-
-    // ---- 计步器防误触（实验性） ----
-
-    val stepDetectionEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_STEP_DETECTION_ENABLED] ?: false
-    }
-
-    suspend fun setStepDetectionEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_STEP_DETECTION_ENABLED] = enabled
-        }
-    }
-
-    // ---- 步行检测阈值（步/分钟） ----
-
-    /** 步行判定阈值（步/分钟），默认 80 */
-    val stepWalkingThreshold: Flow<Int> = context.dataStore.data.map { prefs ->
-        prefs[KEY_STEP_WALKING_THRESHOLD] ?: 80
-    }
-
-    suspend fun setStepWalkingThreshold(threshold: Int) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_STEP_WALKING_THRESHOLD] = threshold
         }
     }
 
@@ -241,6 +169,19 @@ class UserPreferencesManager(private val context: Context) {
     suspend fun clearLastInstalledUpdateVersion() {
         context.dataStore.edit { prefs ->
             prefs.remove(KEY_LAST_INSTALLED_UPDATE_VERSION)
+        }
+    }
+
+    // ---- 首页提示（音量键操作说明） ----
+
+    /** 用户是否永久关闭首页提示（默认展示） */
+    val volumeTipDismissed: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_VOLUME_TIP_DISMISSED] ?: false
+    }
+
+    suspend fun setVolumeTipDismissed() {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_VOLUME_TIP_DISMISSED] = true
         }
     }
 }

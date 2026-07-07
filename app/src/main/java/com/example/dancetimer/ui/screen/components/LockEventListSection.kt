@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,14 +37,14 @@ fun LockEventListSection(
     allRules: List<PricingRuleWithTiers>,
     selectedRuleId: Long?,
     defaultRuleId: Long?,
+    usedLockEventIds: Set<Long> = emptySet(),
+    onMarkUsed: (Long) -> Unit = {},
     onRuleSelected: (Long) -> Unit,
     onStartFromEvent: (ScreenLockEvent) -> Unit,
     onFinishFromEvent: (ScreenLockEvent) -> Unit = {},
     onViewAllLockEvents: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    if (events.isEmpty()) return
-
     val colors = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
 
@@ -68,8 +69,6 @@ fun LockEventListSection(
         val cutoff = System.currentTimeMillis() - 3600 * 1000L
         events.filter { it.timestamp >= cutoff }
     }
-
-    if (recentEvents.isEmpty()) return
 
     // 默认最多展示 3 条
     val displayEvents = recentEvents.take(3)
@@ -126,44 +125,63 @@ fun LockEventListSection(
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
-            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                displayEvents.forEachIndexed { index, event ->
-                    LockEventRow(
-                        event = event,
-                        tiers = tiers,
-                        currentTimeMillis = refreshTick,
-                        onStartTimer = { onStartFromEvent(event) },
-                        onFinishBilling = { onFinishFromEvent(event) }
+            if (recentEvents.isEmpty()) {
+                // 空状态：暂无最近 1 小时内的锁屏记录
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "暂无 1 小时内的锁屏记录",
+                        style = typography.bodySmall,
+                        color = colors.onSurfaceVariant.copy(alpha = 0.45f),
+                        fontSize = 12.sp
                     )
-                    if (index < displayEvents.lastIndex || hasMore) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            color = colors.outlineVariant.copy(alpha = 0.15f)
-                        )
-                    }
                 }
+            } else {
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    displayEvents.forEachIndexed { index, event ->
+                        LockEventRow(
+                            event = event,
+                            tiers = tiers,
+                            currentTimeMillis = refreshTick,
+                            isUsed = event.id in usedLockEventIds,
+                            onMarkUsed = { onMarkUsed(event.id) },
+                            onStartTimer = { onStartFromEvent(event) },
+                            onFinishBilling = { onFinishFromEvent(event) }
+                        )
+                        if (index < displayEvents.lastIndex || hasMore) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                color = colors.outlineVariant.copy(alpha = 0.15f)
+                            )
+                        }
+                    }
 
-                // 查看更多
-                if (hasMore) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onViewAllLockEvents)
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = "查看全部 ${recentEvents.size} 条记录",
-                            style = typography.labelSmall,
-                            color = colors.primary
-                        )
-                        Icon(
-                            Icons.Outlined.ChevronRight,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = colors.primary
-                        )
+                    // 查看更多
+                    if (hasMore) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onViewAllLockEvents)
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = "查看全部 ${recentEvents.size} 条记录",
+                                style = typography.labelSmall,
+                                color = colors.primary
+                            )
+                            Icon(
+                                Icons.Outlined.ChevronRight,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = colors.primary
+                            )
+                        }
                     }
                 }
             }
@@ -173,12 +191,15 @@ fun LockEventListSection(
 
 /**
  * 单条锁屏事件行 — 内联"计费""计时"操作按钮
+ * 已使用的记录会降低不透明度并显示"已使用"标记；重复操作时弹窗警告。
  */
 @Composable
 private fun LockEventRow(
     event: ScreenLockEvent,
     tiers: List<PriceTier>,
     currentTimeMillis: Long,
+    isUsed: Boolean,
+    onMarkUsed: () -> Unit,
     onStartTimer: () -> Unit,
     onFinishBilling: () -> Unit
 ) {
@@ -196,9 +217,14 @@ private fun LockEventRow(
     val colors = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
 
+    // 重复使用警告弹窗状态
+    var showUsedWarning by remember { mutableStateOf(false) }
+    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .alpha(if (isUsed) 0.6f else 1f)
             .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -216,6 +242,20 @@ private fun LockEventRow(
                     style = typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )
+                if (isUsed) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = colors.secondary.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            text = "已使用",
+                            fontSize = 9.sp,
+                            color = colors.secondary,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -227,7 +267,15 @@ private fun LockEventRow(
 
         // 右侧：内联操作按钮
         TextButton(
-            onClick = onFinishBilling,
+            onClick = {
+                if (isUsed) {
+                    pendingAction = onFinishBilling
+                    showUsedWarning = true
+                } else {
+                    onMarkUsed()
+                    onFinishBilling()
+                }
+            },
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
             modifier = Modifier.height(32.dp)
         ) {
@@ -238,7 +286,15 @@ private fun LockEventRow(
             )
         }
         TextButton(
-            onClick = onStartTimer,
+            onClick = {
+                if (isUsed) {
+                    pendingAction = onStartTimer
+                    showUsedWarning = true
+                } else {
+                    onMarkUsed()
+                    onStartTimer()
+                }
+            },
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
             modifier = Modifier.height(32.dp)
         ) {
@@ -248,6 +304,33 @@ private fun LockEventRow(
                 fontSize = 12.sp
             )
         }
+    }
+
+    // 重复使用警告弹窗
+    if (showUsedWarning) {
+        AlertDialog(
+            onDismissRequest = {
+                showUsedWarning = false
+                pendingAction = null
+            },
+            title = { Text("该记录已使用") },
+            text = { Text("此锁屏记录已进行过计时或计费，是否仍要继续？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingAction?.invoke()
+                    pendingAction = null
+                    showUsedWarning = false
+                }) { Text("继续使用") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    pendingAction = null
+                    showUsedWarning = false
+                }) { Text("取消") }
+            },
+            containerColor = colors.surface,
+            tonalElevation = 6.dp
+        )
     }
 }
 

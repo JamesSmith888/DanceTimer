@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.dancetimer.data.preferences.ThemeMode
-import com.example.dancetimer.data.preferences.TriggerMode
 import com.example.dancetimer.data.preferences.UserPreferencesManager
 import com.example.dancetimer.data.update.AppUpdateInfo
 import com.example.dancetimer.data.update.UpdateManager
@@ -24,17 +23,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val prefs = UserPreferencesManager(application)
     private val updateManager = UpdateManager(application)
 
-    val triggerMode: Flow<TriggerMode> = prefs.triggerMode
-
     val vibrateOnTier: Flow<Boolean> = prefs.vibrateOnTier
-
-    val autoStartOnScreenOff: Flow<Boolean> = prefs.autoStartOnScreenOff
-
-    val autoStartDelaySeconds: Flow<Int> = prefs.autoStartDelaySeconds
-
-    val stepDetectionEnabled: Flow<Boolean> = prefs.stepDetectionEnabled
-
-    val stepWalkingThreshold: Flow<Int> = prefs.stepWalkingThreshold
 
     val lockEventRecordEnabled: Flow<Boolean> = prefs.lockEventRecordEnabled
 
@@ -245,41 +234,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // ---- 原有设置方法 ----
-
-    fun setTriggerMode(mode: TriggerMode) {
-        viewModelScope.launch {
-            prefs.setTriggerMode(mode)
-        }
-    }
+    // ---- 设置方法 ----
 
     fun setVibrateOnTier(enabled: Boolean) {
         viewModelScope.launch {
             prefs.setVibrateOnTier(enabled)
-        }
-    }
-
-    fun setAutoStartOnScreenOff(enabled: Boolean) {
-        viewModelScope.launch {
-            prefs.setAutoStartOnScreenOff(enabled)
-        }
-    }
-
-    fun setAutoStartDelaySeconds(seconds: Int) {
-        viewModelScope.launch {
-            prefs.setAutoStartDelaySeconds(seconds)
-        }
-    }
-
-    fun setStepDetectionEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            prefs.setStepDetectionEnabled(enabled)
-        }
-    }
-
-    fun setStepWalkingThreshold(threshold: Int) {
-        viewModelScope.launch {
-            prefs.setStepWalkingThreshold(threshold)
         }
     }
 

@@ -49,5 +49,9 @@ fun AppNavigation(navController: NavHostController) {
         composable(Screen.LockEventHistory.route) {
             LockEventHistoryScreen(navController = navController)
         }
+
+        composable(Screen.Stats.route) {
+            StatsScreen(navController = navController)
+        }
     }
 }

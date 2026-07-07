@@ -38,8 +38,6 @@ fun TimerRunningContent(
     onPauseClick: () -> Unit,
     onResumeClick: () -> Unit,
     onStopClick: () -> Unit,
-    onCancelAutoClick: () -> Unit = {},
-    onConfirmAutoClick: () -> Unit = {},
     onRuleClick: () -> Unit = {}
 ) {
     val typography = MaterialTheme.typography
@@ -122,17 +120,7 @@ fun TimerRunningContent(
 
     Spacer(modifier = Modifier.height(32.dp))
 
-    // ── ⑥ 自动计时提示 ──
-    if (state.isAutoStarted) {
-        AutoStartBanner(
-            elapsedSeconds = state.elapsedSeconds,
-            onCancelAutoClick = onCancelAutoClick,
-            onConfirmAutoClick = onConfirmAutoClick
-        )
-        Spacer(modifier = Modifier.height(28.dp))
-    }
-
-    // ── ⑦ 控制按钮 ──
+    // ── ⑥ 控制按钮 ──
     TimerControlButtons(
         isPaused = state.isPaused,
         onPauseClick = onPauseClick,
@@ -177,13 +165,11 @@ private fun StatusBar(state: TimerState.Running) {
             Spacer(Modifier.width(8.dp))
             Text(
                 text = when {
-                    state.isAutoStarted -> "自动计时"
                     state.isPaused -> "已暂停"
                     else -> "计时中"
                 },
                 style = typography.titleSmall,
-                color = if (state.isAutoStarted) colors.tertiary
-                        else colors.onBackground.copy(alpha = 0.7f)
+                color = colors.onBackground.copy(alpha = 0.7f)
             )
         }
 
@@ -233,73 +219,3 @@ private fun CostInfoSection(state: TimerState.Running) {
     }
 }
 
-@Composable
-private fun AutoStartBanner(
-    elapsedSeconds: Int,
-    onCancelAutoClick: () -> Unit,
-    onConfirmAutoClick: () -> Unit
-) {
-    val colors = MaterialTheme.colorScheme
-    val typography = MaterialTheme.typography
-    val minutes = elapsedSeconds / 60
-    val seconds = elapsedSeconds % 60
-    val timeText = if (minutes > 0) "${minutes}分${seconds}秒" else "${seconds}秒"
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = colors.errorContainer.copy(alpha = 0.3f)
-        ),
-        modifier = Modifier.fillMaxWidth(0.92f)
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Text(
-                text = "🤖 息屏自动启动了计时（已 $timeText）",
-                style = typography.titleSmall,
-                color = colors.tertiary
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "计满半首歌后将自动确认",
-                style = typography.bodySmall,
-                color = colors.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Button(
-                    onClick = onConfirmAutoClick,
-                    colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp)
-                ) {
-                    Text(
-                        text = "✓ 确认继续",
-                        style = typography.labelLarge,
-                        color = colors.onPrimary
-                    )
-                }
-                OutlinedButton(
-                    onClick = onCancelAutoClick,
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp)
-                ) {
-                    Text(
-                        text = "✗ 取消",
-                        style = typography.labelLarge,
-                        color = colors.error
-                    )
-                }
-            }
-        }
-    }
-}

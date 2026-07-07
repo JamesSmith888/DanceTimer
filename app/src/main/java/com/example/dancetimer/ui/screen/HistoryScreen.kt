@@ -1,11 +1,14 @@
 package com.example.dancetimer.ui.screen
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,9 +34,10 @@ fun HistoryScreen(
 ) {
     val records by viewModel.allRecords.collectAsState(initial = emptyList())
     val todayCost by viewModel.todayCost.collectAsState(initial = 0f)
-    val weekCost by viewModel.weekCost.collectAsState(initial = 0f)
-    val monthCost by viewModel.monthCost.collectAsState(initial = 0f)
+    val last30DaysCost by viewModel.last30DaysCost.collectAsState(initial = 0f)
+    val totalCost by viewModel.totalCost.collectAsState(initial = 0f)
     var showClearDialog by remember { mutableStateOf(false) }
+    var deleteCandidate by remember { mutableStateOf<DanceRecord?>(null) }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     Scaffold(
@@ -57,6 +61,15 @@ fun HistoryScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        navController.navigate(Screen.Stats.route) { launchSingleTop = true }
+                    }) {
+                        Icon(
+                            Icons.Filled.Analytics,
+                            contentDescription = "数据统计",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     if (records.isNotEmpty()) {
                         IconButton(onClick = { showClearDialog = true }) {
                             Icon(
@@ -76,7 +89,7 @@ fun HistoryScreen(
             )
         }
     ) { padding ->
-        if (records.isEmpty()) {
+        if (records.none { it.cost > 0f }) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -90,9 +103,11 @@ fun HistoryScreen(
             val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
             val grouped by remember(records) {
                 derivedStateOf {
-                    records.groupBy { record ->
-                        dateFormat.format(Date(record.startTime))
-                    }
+                    records
+                        .filter { it.cost > 0f }
+                        .groupBy { record ->
+                            dateFormat.format(Date(record.startTime))
+                        }
                 }
             }
 
@@ -103,9 +118,9 @@ fun HistoryScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 统计卡片
+                // 统计卡片（始终展示）
                 item {
-                    CostSummaryCard(todayCost, weekCost, monthCost)
+                    CostSummaryCard(todayCost, last30DaysCost, totalCost)
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
@@ -128,7 +143,8 @@ fun HistoryScreen(
                                 navController.navigate(
                                     Screen.RecordDetail.createRoute(record.id)
                                 ) { launchSingleTop = true }
-                            }
+                            },
+                            onLongClick = { deleteCandidate = record }
                         )
                     }
                 }
@@ -161,10 +177,40 @@ fun HistoryScreen(
             tonalElevation = 6.dp
         )
     }
+
+    // 单条删除确认对话框（长按触发）
+    deleteCandidate?.let { record ->
+        val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+        val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
+        AlertDialog(
+            onDismissRequest = { deleteCandidate = null },
+            title = { Text("删除此记录？") },
+            text = {
+                Text(
+                    "${dateFormat.format(Date(record.startTime))} ${timeFormat.format(Date(record.startTime))} · ${CostCalculator.formatCost(record.cost)}"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteRecord(record)
+                    deleteCandidate = null
+                }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteCandidate = null }) {
+                    Text("取消")
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        )
+    }
 }
 
 @Composable
-private fun CostSummaryCard(todayCost: Float, weekCost: Float, monthCost: Float) {
+private fun CostSummaryCard(todayCost: Float, last30DaysCost: Float, totalCost: Float) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -178,8 +224,8 @@ private fun CostSummaryCard(todayCost: Float, weekCost: Float, monthCost: Float)
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             CostItem("今日", todayCost)
-            CostItem("本周", weekCost)
-            CostItem("本月", monthCost)
+            CostItem("30天", last30DaysCost)
+            CostItem("总计", totalCost)
         }
     }
 }
@@ -198,17 +244,21 @@ private fun CostItem(label: String, cost: Float) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecordCard(
     record: DanceRecord,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val isCancelled = record.isCancelled
     val isAuto = record.isAutoTriggered
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (isCancelled)
@@ -216,8 +266,7 @@ private fun RecordCard(
             else
                 MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        onClick = onClick
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
@@ -227,15 +276,30 @@ private fun RecordCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
+                val totalMin = record.durationSeconds / 60
+                val subtitleText = if (isCancelled && record.cancelledDurationSeconds > 0) {
+                    val m = record.cancelledDurationSeconds / 60
+                    val s = record.cancelledDurationSeconds % 60
+                    val dur = if (m > 0) "${m}分${s}秒" else "${s}秒"
+                    "运行 $dur · 已取消"
+                } else {
+                    "${totalMin}分钟 · ${record.pricingRuleName}"
+                }
+                Text(
+                    text = subtitleText,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isCancelled)
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    else
+                        MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = timeFormat.format(Date(record.startTime)),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = if (isCancelled)
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        else
-                            MaterialTheme.colorScheme.onSurface
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (isAuto) {
                         Spacer(modifier = Modifier.width(6.dp))
@@ -266,21 +330,6 @@ private fun RecordCard(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(2.dp))
-                val totalMin = record.durationSeconds / 60
-                val subtitleText = if (isCancelled && record.cancelledDurationSeconds > 0) {
-                    val m = record.cancelledDurationSeconds / 60
-                    val s = record.cancelledDurationSeconds % 60
-                    val dur = if (m > 0) "${m}分${s}秒" else "${s}秒"
-                    "运行 $dur · 已取消"
-                } else {
-                    "${totalMin}分钟 · ${record.pricingRuleName}"
-                }
-                Text(
-                    text = subtitleText,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             Text(

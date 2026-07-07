@@ -5,79 +5,65 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.dancetimer.data.db.AppDatabase
 import com.example.dancetimer.data.model.DanceRecord
+import com.example.dancetimer.util.DateRangeCalculator
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import java.util.*
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class HistoryViewModel(application: Application) : AndroidViewModel(application) {
 
     private val dao = AppDatabase.getInstance(application).danceRecordDao()
 
     val allRecords: Flow<List<DanceRecord>> = dao.getAll()
 
-    val todayCost: Flow<Float> = dao.getTodayCost(startOfToday())
+    /**
+     * 午夜触发器：立即发射一次，之后在每个自然日的 00:00:00 再次发射。
+     *
+     * 所有日期相关的费用统计 Flow 均通过 [flatMapLatest] 挂载在此触发器上，
+     * 确保时间边界在每个查询周期内**动态计算**而非使用构造时的快照。
+     * 这从根本上消除了 ViewModel 实例跨日/跨周/跨月存活导致数据陈旧的问题。
+     *
+     * [SharingStarted.WhileSubscribed]：无活跃收集者时暂停上游（节省资源）；
+     * [replay = 1]：新收集者订阅时立即获得最新值，无需等待下一个午夜。
+     * 5 s 的 stopTimeout 防止横竖屏切换等配置变更期间不必要的重启。
+     */
+    private val dateTicker: Flow<Unit> = flow {
+        while (true) {
+            emit(Unit)
+            // 等到下一个自然日午夜；至少保留 60 s 防止时钟漂移/夏令时导致的死循环
+            delay(DateRangeCalculator.msUntilTomorrow().coerceAtLeast(60_000L))
+        }
+    }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), replay = 1)
 
-    val weekCost: Flow<Float> = dao.getCostInRange(startOfWeek(), endOfToday())
+    /** 今日累计费用（每日午夜自动刷新）。 */
+    val todayCost: Flow<Float> = dateTicker.flatMapLatest {
+        dao.getCostInRange(
+            from = DateRangeCalculator.startOfToday(),
+            to   = DateRangeCalculator.startOfTomorrow()
+        )
+    }
 
-    val monthCost: Flow<Float> = dao.getCostInRange(startOfMonth(), endOfToday())
+    /** 过去30天累计费用（每日午夜自动刷新，含今日共30个自然日，与自然月无关）。 */
+    val last30DaysCost: Flow<Float> = dateTicker.flatMapLatest {
+        dao.getCostInRange(
+            from = DateRangeCalculator.startOf30DaysAgo(),
+            to   = DateRangeCalculator.startOfTomorrow()
+        )
+    }
+
+    /** 全部记录累计费用（总计）。 */
+    val totalCost: Flow<Float> = dao.getTotalCost()
 
     fun deleteRecord(record: DanceRecord) {
-        viewModelScope.launch {
-            dao.delete(record)
-        }
+        viewModelScope.launch { dao.delete(record) }
     }
 
     fun deleteAll() {
-        viewModelScope.launch {
-            dao.deleteAll()
-        }
+        viewModelScope.launch { dao.deleteAll() }
     }
 
-    suspend fun getRecordById(id: Long): DanceRecord? {
-        return dao.getById(id)
-    }
-
-    // ---- 时间工具 ----
-
-    private fun startOfToday(): Long {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return cal.timeInMillis
-    }
-
-    private fun endOfToday(): Long {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 23)
-            set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59)
-            set(Calendar.MILLISECOND, 999)
-        }
-        return cal.timeInMillis
-    }
-
-    private fun startOfWeek(): Long {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return cal.timeInMillis
-    }
-
-    private fun startOfMonth(): Long {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return cal.timeInMillis
-    }
+    suspend fun getRecordById(id: Long): DanceRecord? = dao.getById(id)
 }
+
