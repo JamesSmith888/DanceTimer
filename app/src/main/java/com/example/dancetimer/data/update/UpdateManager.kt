@@ -504,6 +504,17 @@ class UpdateManager(private val context: Context) {
         return compareVersions(remote, current) > 0
     }
 
+    /**
+     * 获取最新 Release 中第一个 APK 附件的浏览器直链 URL。
+     * 若无 APK 附件返回 null；网络失败时抛出异常。
+     */
+    suspend fun getLatestApkUrl(): String? = withContext(Dispatchers.IO) {
+        val response = fetchLatestRelease()
+        response.assets
+            .firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+            ?.downloadUrl
+    }
+
     /** 更新相关的异常 */
     class UpdateException(message: String, cause: Throwable? = null) : Exception(message, cause)
 }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,6 +26,7 @@ import com.example.dancetimer.ui.screen.content.TimerFinishedContent
 import com.example.dancetimer.ui.screen.content.TimerIdleContent
 import com.example.dancetimer.ui.screen.content.TimerRunningContent
 import com.example.dancetimer.ui.screen.components.BackgroundGuideDialog
+import com.example.dancetimer.ui.screen.components.ShareQrDialog
 import com.example.dancetimer.ui.screen.components.UpdateDialog
 import com.example.dancetimer.ui.screen.components.isIgnoringBatteryOptimizations
 import com.example.dancetimer.ui.screen.components.openBatterySettings
@@ -44,6 +46,7 @@ fun HomeScreen(
     val timerState by viewModel.timerState.collectAsState()
     val defaultRule by viewModel.defaultRule.collectAsState(initial = null)
     val updateState by settingsViewModel.updateState.collectAsState()
+    val shareQrState by settingsViewModel.shareQrState.collectAsState()
     val recentLockEvents by viewModel.recentLockEvents.collectAsState(initial = emptyList())
     val allRulesWithTiers by viewModel.allRulesWithTiers.collectAsState(initial = emptyList())
     val selectedLockEventRuleId by viewModel.selectedLockEventRuleId.collectAsState()
@@ -93,6 +96,13 @@ fun HomeScreen(
         onSkipVersion = { version: String -> settingsViewModel.skipVersion(version) }
     )
 
+    // 扫码下载二维码对话框
+    ShareQrDialog(
+        state = shareQrState,
+        onDismiss = { settingsViewModel.dismissShareQr() },
+        onRetry = { settingsViewModel.requestShareQr() }
+    )
+
     val isRunning = timerState is TimerState.Running
     val isPaused = (timerState as? TimerState.Running)?.isPaused == true
     val isDark = MaterialTheme.colorScheme.surface == DarkSurface
@@ -127,6 +137,9 @@ fun HomeScreen(
                     navigationIconContentColor = colors.onBackground
                 ),
                 actions = {
+                    IconButton(onClick = { settingsViewModel.requestShareQr() }) {
+                        Icon(Icons.Filled.QrCode2, contentDescription = "扫码下载")
+                    }
                     IconButton(onClick = {
                         navController.navigate(Screen.History.route) { launchSingleTop = true }
                     }) {

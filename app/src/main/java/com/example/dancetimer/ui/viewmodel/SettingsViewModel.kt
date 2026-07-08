@@ -13,6 +13,16 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * 二维码分享功能的 UI 状态。
+ */
+sealed interface ShareQrState {
+    data object Idle : ShareQrState
+    data object Loading : ShareQrState
+    data class Ready(val bitmap: android.graphics.Bitmap, val url: String) : ShareQrState
+    data class Error(val message: String) : ShareQrState
+}
+
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
@@ -252,6 +262,59 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             prefs.setThemeMode(mode)
         }
+    }
+
+    // ---- 二维码分享 ----
+
+    private val _shareQrState = MutableStateFlow<ShareQrState>(ShareQrState.Idle)
+    val shareQrState: StateFlow<ShareQrState> = _shareQrState.asStateFlow()
+
+    /**
+     * 请求生成最新 APK 下载二维码。
+     * 流程：调 Gitee API → 拿最新 APK 直链 → 在后台线程生成二维码 Bitmap → Ready 状态。
+     */
+    fun requestShareQr() {
+        if (_shareQrState.value is ShareQrState.Loading) return
+        _shareQrState.value = ShareQrState.Loading
+        viewModelScope.launch {
+            try {
+                val url = updateManager.getLatestApkUrl()
+                if (url == null) {
+                    _shareQrState.value = ShareQrState.Error("未找到 APK 下载链接，请确认 Gitee 仓库已发布 Release")
+                    return@launch
+                }
+                val bitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    generateQrBitmap(url)
+                }
+                _shareQrState.value = ShareQrState.Ready(bitmap, url)
+            } catch (e: Exception) {
+                Log.e("SettingsViewModel", "生成分享二维码失败", e)
+                _shareQrState.value = ShareQrState.Error(e.localizedMessage ?: "生成二维码失败，请检查网络连接")
+            }
+        }
+    }
+
+    /** 关闭二维码对话框，释放 Bitmap 内存 */
+    fun dismissShareQr() {
+        (shareQrState.value as? ShareQrState.Ready)?.bitmap?.recycle()
+        _shareQrState.value = ShareQrState.Idle
+    }
+
+    private fun generateQrBitmap(content: String, size: Int = 600): android.graphics.Bitmap {
+        val hints = java.util.EnumMap<com.google.zxing.EncodeHintType, Any>(com.google.zxing.EncodeHintType::class.java).apply {
+            put(com.google.zxing.EncodeHintType.MARGIN, 1)
+            put(com.google.zxing.EncodeHintType.ERROR_CORRECTION, com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M)
+            put(com.google.zxing.EncodeHintType.CHARACTER_SET, "UTF-8")
+        }
+        val bitMatrix = com.google.zxing.qrcode.QRCodeWriter()
+            .encode(content, com.google.zxing.BarcodeFormat.QR_CODE, size, size, hints)
+        val pixels = IntArray(size * size)
+        for (y in 0 until size) {
+            for (x in 0 until size) {
+                pixels[y * size + x] = if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+            }
+        }
+        return android.graphics.Bitmap.createBitmap(pixels, size, size, android.graphics.Bitmap.Config.ARGB_8888)
     }
 
     override fun onCleared() {

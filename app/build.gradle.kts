@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.dancetimer"
         minSdk = 24
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.1.11"
+        versionCode = 10
+        versionName = "0.1.12"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -86,6 +86,9 @@ dependencies {
 
     // Gson
     implementation(libs.gson)
+
+    // ZXing — QR code generation (pure Java, no native deps)
+    implementation(libs.zxing.core)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
