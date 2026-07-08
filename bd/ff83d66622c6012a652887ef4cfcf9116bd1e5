@@ -1,0 +1,44 @@
+app/build.gradle.kts
+  s_eac003df27303d::t_65c7a519306513 90-92
+  h_fbb9b8e239a0dd 16-17
+app/src/main/java/com/example/dancetimer/ui/screen/components/ShareQrDialog.kt
+  s_eac003df27303d::t_ad759d55687999 70-75,77-78
+  h_fbb9b8e239a0dd 34,76
+  s_eac003df27303d::t_4b0051e74b32b6 1-33,35-69,79-111
+app/src/main/java/com/example/dancetimer/ui/screen/HomeScreen.kt
+  s_eac003df27303d::t_b91b8d9ce758c0 49
+  s_eac003df27303d::t_124cecea844fe8 29
+  s_eac003df27303d::t_de43016af6244a 99-105
+  s_eac003df27303d::t_b9e689ce881024 140-142
+  s_eac003df27303d::t_800d16f6c3aaf6 11
+gradle/libs.versions.toml
+  s_eac003df27303d::t_65c7a519306513 20,48
+app/src/main/java/com/example/dancetimer/ui/viewmodel/SettingsViewModel.kt
+  s_eac003df27303d::t_d5e6fb76771851 281-285
+  s_eac003df27303d::t_f3176fbbc9d3f4 267-280,286-319
+  s_eac003df27303d::t_4631117637a413 16-25
+app/src/main/java/com/example/dancetimer/data/update/UpdateManager.kt
+  s_eac003df27303d::t_d5e6fb76771851 508-509,511,513-515
+  s_eac003df27303d::t_67618b2e0f7dca 507,510,512,516-517
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.32-trip",
+  "base_commit_sha": "bdff83d66622c6012a652887ef4cfcf9116bd1e5",
+  "prompts": {},
+  "humans": {
+    "h_fbb9b8e239a0dd": {
+      "author": "James Smith(杨鑫) <xin.y@trip.com>"
+    }
+  },
+  "sessions": {
+    "s_eac003df27303d": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "b185a59d-2637-4f28-bf77-b2d948b35f68",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "James Smith(杨鑫) <xin.y@trip.com>"
+    }
+  }
+}
